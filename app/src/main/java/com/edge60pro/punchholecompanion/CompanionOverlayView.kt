@@ -53,59 +53,105 @@ class CompanionOverlayView(
     private var edgeProgress = 0f
     private var edgeDirection = 1f
 
-    private var ropeThicknessPx = 3.2f * density
-    private var currentSkin: CharacterSkin = CharacterSkin.SHADOW_NINJA
+    private var ropeThicknessPx = 4.0f * density
+    private var currentSkin: CharacterSkin = CharacterSkin.MOCHI_CAT
+    private var autoSwapEnabled: Boolean = true
+    private var swapIndex: Int = 0
     private var currentStretchRatio: Float = 1.0f
 
     private var lottieRig: LottieCharacterRig? = null
     private var currentBatteryPct = 100
     private var activeBpm = 120f
 
+    // Pre-allocated Paths & RectF (Zero GC allocations during 120Hz onDraw)
     private val ropePath = Path()
-    private val scarfPath = Path()
+    private val scarfOrTailPath = Path()
+    private val earPath = Path()
     private val lightningPath = Path()
     private val bodyRect = RectF()
 
+    // Studio Braided Rope Paints (with Paint.Join.ROUND fix)
     private val ropeShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
-        color = Color.argb(90, 0, 0, 0)
+        color = Color.argb(85, 0, 0, 0)
+    }
+
+    private val ropeOutlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        color = Color.parseColor("#181A24")
     }
 
     private val ropePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
-        color = Color.parseColor("#E2C08D")
+        color = Color.parseColor("#F4A261")
+    }
+
+    private val ropeBraidPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        pathEffect = DashPathEffect(floatArrayOf(5f * density, 7f * density), 0f)
+        color = Color.parseColor("#E76F51")
+    }
+
+    // Studio Cel-Shaded Cartoon Character Paints
+    private val cartoonOutlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2.6f * density
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        color = Color.parseColor("#14161F")
+    }
+
+    private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+
+    private val secondaryPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+
+    private val accentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+
+    private val eyePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+
+    private val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.WHITE
+    }
+
+    private val blushPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.argb(135, 255, 105, 135)
+    }
+
+    private val limbPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 5.5f * density
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    private val tailStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 7.5f * density
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
     }
 
     private val cutoutRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 2.5f * density
         color = Color.parseColor("#00E5FF")
-    }
-
-    private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-        color = Color.parseColor("#1E222D")
-    }
-
-    private val accentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-        color = Color.parseColor("#FF5252")
-    }
-
-    private val eyePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-        color = Color.parseColor("#00E5FF")
-    }
-
-    private val limbPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 5f * density
-        strokeCap = Paint.Cap.ROUND
-        color = Color.parseColor("#1E222D")
     }
 
     private val tensionIndicatorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -168,15 +214,40 @@ class CompanionOverlayView(
     fun applyConfig(config: CompanionConfig) {
         rope.totalLengthPx = config.ropeLengthDp * density
         ropeThicknessPx = config.ropeThicknessDp * density
+        autoSwapEnabled = config.autoSwapCharacters
         currentSkin = config.skin
+        swapIndex = CharacterSkin.values().indexOf(currentSkin).coerceAtLeast(0)
+        syncSkinPaints(currentSkin)
+    }
 
+    private fun syncSkinPaints(skin: CharacterSkin) {
         ropePaint.strokeWidth = ropeThicknessPx
-        ropePaint.color = currentSkin.ropeColor
-        ropeShadowPaint.strokeWidth = ropeThicknessPx + 2f * density
-        bodyPaint.color = currentSkin.bodyColor
-        accentPaint.color = currentSkin.accentColor
-        eyePaint.color = currentSkin.eyeColor
-        limbPaint.color = currentSkin.bodyColor
+        ropeOutlinePaint.strokeWidth = ropeThicknessPx + 2.8f * density
+        ropeShadowPaint.strokeWidth = ropeThicknessPx + 4.0f * density
+        ropeBraidPaint.strokeWidth = (ropeThicknessPx * 0.55f).coerceAtLeast(1.5f * density)
+
+        ropePaint.color = skin.ropeColor
+        ropeBraidPaint.color = skin.ropeBraidColor
+        bodyPaint.color = skin.bodyColor
+        secondaryPaint.color = skin.secondaryColor
+        accentPaint.color = skin.accentColor
+        eyePaint.color = skin.eyeColor
+        limbPaint.color = skin.bodyColor
+        tailStrokePaint.color = skin.bodyColor
+    }
+
+    /**
+     * Rotates to the next studio character every time the companion emerges from the punch hole.
+     */
+    private fun advanceCharacterIfAutoSwap() {
+        if (autoSwapEnabled) {
+            val allSkins = CharacterSkin.values()
+            swapIndex = (swapIndex + 1) % allSkins.size
+            currentSkin = allSkins[swapIndex]
+        } else {
+            currentSkin = CompanionRepository.config.value.skin
+        }
+        syncSkinPaints(currentSkin)
     }
 
     fun toggleCharacterVisibility() {
@@ -189,6 +260,7 @@ class CompanionOverlayView(
 
     fun spawnFromPunchHole() {
         if (state != CharacterState.HIDDEN) return
+        advanceCharacterIfAutoSwap()
         rope.resetToAnchor(rope.anchorX, rope.anchorY)
         rope.deployedRatio = 0.02f
         state = CharacterState.DESCENDING
@@ -283,6 +355,7 @@ class CompanionOverlayView(
     fun triggerBatteryReaction(isChargingSurge: Boolean, batteryPct: Int) {
         currentBatteryPct = batteryPct
         if (state == CharacterState.HIDDEN) {
+            advanceCharacterIfAutoSwap()
             rope.resetToAnchor(rope.anchorX, rope.anchorY)
             rope.deployedRatio = 0.85f
         } else {
@@ -307,6 +380,7 @@ class CompanionOverlayView(
         alertBadgePaint.color = accentColor
 
         if (state == CharacterState.HIDDEN) {
+            advanceCharacterIfAutoSwap()
             rope.resetToAnchor(rope.anchorX, rope.anchorY)
             rope.deployedRatio = 0.72f
         }
@@ -320,6 +394,7 @@ class CompanionOverlayView(
     fun triggerMusicDance(bpm: Float) {
         activeBpm = bpm.coerceIn(90f, 160f)
         if (state == CharacterState.HIDDEN) {
+            advanceCharacterIfAutoSwap()
             rope.resetToAnchor(rope.anchorX, rope.anchorY)
             rope.deployedRatio = 0.88f
         }
@@ -366,9 +441,9 @@ class CompanionOverlayView(
     private fun updatePhysicsAndStateMachine(dt: Float) {
         stateTimer += dt
         blinkTimer += dt
-        if (blinkTimer > 3.4f) {
+        if (blinkTimer > 3.2f) {
             isBlinking = true
-            if (blinkTimer > 3.55f) {
+            if (blinkTimer > 3.36f) {
                 isBlinking = false
                 blinkTimer = 0f
             }
@@ -510,14 +585,14 @@ class CompanionOverlayView(
                 val speed = 220f * density
                 val w = width.toFloat().coerceAtLeast(1080f)
                 val h = height.toFloat().coerceAtLeast(2400f)
-                val margin = 22f * density
+                val margin = 24f * density
 
                 edgeProgress += speed * dt * edgeDirection
 
                 val totalRunTime = 5.5f
                 if (stateTimer < 1.8f) {
                     charX = edgeProgress.coerceIn(margin, w - margin)
-                    charY = rope.anchorY + 12f * density
+                    charY = rope.anchorY + 14f * density
                     charRotationDeg = 0f
                     if (charX <= margin + 2f || charX >= w - margin - 2f) {
                         stateTimer = 1.8f
@@ -533,7 +608,7 @@ class CompanionOverlayView(
                     val returnPhase = ((stateTimer - 4.0f) / 1.2f).coerceIn(0f, 1f)
                     val startX = if (edgeDirection > 0) w - margin else margin
                     charX = startX + (rope.anchorX - startX) * returnPhase
-                    charY = rope.anchorY + 12f * density
+                    charY = rope.anchorY + 14f * density
                     charRotationDeg = 0f
                 }
 
@@ -665,15 +740,18 @@ class CompanionOverlayView(
         super.onDraw(canvas)
         if (state == CharacterState.HIDDEN) return
 
+        // 1. Cutout Portal Glow Ring
         if (state == CharacterState.DESCENDING || state == CharacterState.CLIMBING_UP) {
             cutoutRingPaint.alpha = (sin(portalScale * PI.toFloat()) * 200).toInt().coerceIn(0, 220)
             canvas.drawCircle(rope.anchorX, rope.anchorY, 19f * density, cutoutRingPaint)
         }
 
+        // 2. Slingshot Aim Vector
         if (state == CharacterState.DRAGGING_SLINGSHOT && currentStretchRatio > 1.15f) {
             canvas.drawLine(charX, charY, rope.anchorX, rope.anchorY, tensionIndicatorPaint)
         }
 
+        // 3. Studio Cel-Shaded Braided Rope + Knot Ring
         if (rope.deployedRatio > 0.04f) {
             ropePath.reset()
             ropePath.moveTo(rope.x[0], rope.y[0])
@@ -685,10 +763,20 @@ class CompanionOverlayView(
             val last = rope.nodeCount - 1
             ropePath.lineTo(rope.x[last], rope.y[last])
 
+            // 4-Pass Studio Rope: Drop Shadow -> Cel Outline -> Base Cord -> Braided Fiber Texture
             canvas.drawPath(ropePath, ropeShadowPaint)
+            canvas.drawPath(ropePath, ropeOutlinePaint)
             canvas.drawPath(ropePath, ropePaint)
+            canvas.drawPath(ropePath, ropeBraidPaint)
+
+            // Studio Rope Knot / Clasp where the character's hands grip
+            val tipX = rope.x[last]
+            val tipY = rope.y[last]
+            canvas.drawCircle(tipX, tipY, ropeThicknessPx * 1.15f, accentPaint)
+            canvas.drawCircle(tipX, tipY, ropeThicknessPx * 1.15f, cartoonOutlinePaint)
         }
 
+        // 4. Character Rig (Lottie or Studio Cel-Shaded Cartoon Procedural Rig)
         val rig = lottieRig
         if (rig != null && rig.isLoaded) {
             rig.drawAtRopeTip(
@@ -700,110 +788,342 @@ class CompanionOverlayView(
                 scaleY = scaleY * portalScale
             )
         } else {
-            drawProceduralSkinCharacter(canvas)
+            drawStudioCartoonCharacter(canvas)
         }
 
+        // 5. Battery / Notification / Music VFX Overlays
         drawStateVfxOverlays(canvas)
     }
 
-    private fun drawProceduralSkinCharacter(canvas: Canvas) {
+    private fun drawStudioCartoonCharacter(canvas: Canvas) {
         canvas.save()
         canvas.translate(charX, charY)
         canvas.rotate(charRotationDeg)
         canvas.scale(scaleX * portalScale, scaleY * portalScale)
 
-        val r = 17f * density
+        val r = 19.5f * density
 
         when (currentSkin) {
-            CharacterSkin.SHADOW_NINJA -> {
-                scarfPath.reset()
-                scarfPath.moveTo(0f, -r * 0.3f)
-                val wave1 = sin(stateTimer * 9f) * 12f * density
-                val wave2 = cos(stateTimer * 9f) * 18f * density
-                scarfPath.cubicTo(
-                    -r * 1.4f, -r * 0.5f + wave1 * 0.5f,
-                    -r * 2.1f, -r * 0.2f + wave2,
-                    -r * 2.8f, r * 0.2f + wave1
-                )
-                scarfPath.lineTo(-r * 2.4f, r * 0.55f + wave1)
-                scarfPath.close()
-                canvas.drawPath(scarfPath, accentPaint)
-
-                val limbSwing = when (state) {
-                    CharacterState.EDGE_WALKING -> sin(stateTimer * 20f) * 12f * density
-                    CharacterState.TRICK_SWING_WAVE -> sin(stateTimer * 15f) * 14f * density
-                    CharacterState.CLIMBING_UP -> sin(stateTimer * 24f) * 10f * density
-                    else -> sin(stateTimer * 3.5f) * 3f * density
-                }
-                limbPaint.color = currentSkin.bodyColor
-                limbPaint.strokeWidth = 5f * density
-                canvas.drawLine(-r * 0.6f, 0f, -r * 0.9f, -r * 1.1f + limbSwing, limbPaint)
-                canvas.drawLine(r * 0.6f, 0f, r * 1.1f, -r * 0.8f - limbSwing, limbPaint)
-                canvas.drawLine(-r * 0.4f, r * 0.7f, -r * 0.6f + limbSwing * 0.5f, r * 1.6f, limbPaint)
-                canvas.drawLine(r * 0.4f, r * 0.7f, r * 0.6f - limbSwing * 0.5f, r * 1.6f, limbPaint)
-
-                bodyRect.set(-r, -r * 0.85f, r, r * 0.95f)
-                canvas.drawRoundRect(bodyRect, r * 0.85f, r * 0.85f, bodyPaint)
-
-                bodyRect.set(-r * 0.98f, -r * 0.52f, r * 0.98f, -r * 0.22f)
-                canvas.drawRoundRect(bodyRect, 4f * density, 4f * density, accentPaint)
-
-                val eyeHeight = if (isBlinking) 1.2f * density else 4.2f * density
-                val eyeWidth = 4.8f * density
-                bodyRect.set(-r * 0.52f, -r * 0.1f - eyeHeight, -r * 0.52f + eyeWidth, -r * 0.1f + eyeHeight)
-                canvas.drawOval(bodyRect, eyePaint)
-                bodyRect.set(r * 0.52f - eyeWidth, -r * 0.1f - eyeHeight, r * 0.52f, -r * 0.1f + eyeHeight)
-                canvas.drawOval(bodyRect, eyePaint)
-            }
-
-            CharacterSkin.CYBER_SPIDER -> {
-                limbPaint.color = currentSkin.accentColor
-                limbPaint.strokeWidth = 3.2f * density
-                for (side in listOf(-1f, 1f)) {
-                    for (legIdx in 0..3) {
-                        val legPhase = sin(stateTimer * 16f + legIdx * 1.3f) * 6f * density
-                        val baseAngleY = (-0.4f + legIdx * 0.3f) * r
-                        val kneeX = side * r * 1.45f
-                        val kneeY = baseAngleY - 6f * density + legPhase * 0.5f
-                        val footX = side * r * 1.95f
-                        val footY = baseAngleY + 8f * density + legPhase
-                        canvas.drawLine(side * r * 0.7f, baseAngleY, kneeX, kneeY, limbPaint)
-                        canvas.drawLine(kneeX, kneeY, footX, footY, limbPaint)
-                    }
-                }
-                bodyRect.set(-r * 0.95f, -r * 0.85f, r * 0.95f, r * 0.95f)
-                canvas.drawOval(bodyRect, bodyPaint)
-                for (offset in listOf(-0.45f, -0.16f, 0.16f, 0.45f)) {
-                    canvas.drawCircle(r * offset, -r * 0.1f, 2.6f * density, eyePaint)
-                }
-            }
-
-            CharacterSkin.ASTRO_CADET -> {
-                bodyRect.set(-r * 1.15f, -r * 0.6f, r * 1.15f, r * 0.7f)
-                canvas.drawRoundRect(bodyRect, 6f * density, 6f * density, accentPaint)
-                bodyRect.set(-r, -r * 0.9f, r, r * 0.95f)
-                canvas.drawRoundRect(bodyRect, r * 0.9f, r * 0.9f, bodyPaint)
-                bodyRect.set(-r * 0.78f, -r * 0.55f, r * 0.78f, r * 0.25f)
-                canvas.drawRoundRect(bodyRect, r * 0.4f, r * 0.4f, accentPaint)
-            }
-
-            CharacterSkin.NEON_KODAMA -> {
-                for (orb in 0..2) {
-                    val angle = stateTimer * 4.5f + orb * 2.09f
-                    val ox = cos(angle) * r * 1.45f
-                    val oy = sin(angle) * r * 1.1f
-                    accentPaint.alpha = 180
-                    canvas.drawCircle(ox, oy, 4f * density, accentPaint)
-                }
-                accentPaint.alpha = 255
-                bodyRect.set(-r * 0.9f, -r * 0.95f, r * 0.9f, r * 0.9f)
-                canvas.drawRoundRect(bodyRect, r * 0.9f, r * 0.7f, bodyPaint)
-                canvas.drawCircle(-r * 0.36f, -r * 0.15f, 4.5f * density, eyePaint)
-                canvas.drawCircle(r * 0.36f, -r * 0.15f, 4.5f * density, eyePaint)
-            }
+            CharacterSkin.MOCHI_CAT -> drawMochiCat(canvas, r)
+            CharacterSkin.SHADOW_NINJA -> drawShadowNinja(canvas, r)
+            CharacterSkin.ASTRO_BOT -> drawAstroBot(canvas, r)
+            CharacterSkin.KITSUNE_SPIRIT -> drawKitsuneSpirit(canvas, r)
         }
 
         canvas.restore()
+    }
+
+    private fun drawMochiCat(canvas: Canvas, r: Float) {
+        // 1. Swishing S-Curve Cat Tail behind body
+        val tailWag = sin(stateTimer * 6.5f) * 14f * density
+        scarfOrTailPath.reset()
+        scarfOrTailPath.moveTo(0f, r * 1.15f)
+        scarfOrTailPath.cubicTo(
+            r * 1.1f, r * 1.35f,
+            r * 1.55f, r * 0.4f + tailWag,
+            r * 1.95f, r * 0.1f - tailWag * 0.6f
+        )
+        tailStrokePaint.strokeWidth = 8.5f * density
+        tailStrokePaint.color = Color.parseColor("#14161F")
+        canvas.drawPath(scarfOrTailPath, tailStrokePaint)
+        tailStrokePaint.strokeWidth = 5.5f * density
+        tailStrokePaint.color = currentSkin.accentColor
+        canvas.drawPath(scarfOrTailPath, tailStrokePaint)
+
+        // 2. Plump Chibi Cat Body + Cream Belly Patch
+        bodyRect.set(-r * 0.72f, r * 0.4f, r * 0.72f, r * 1.55f)
+        canvas.drawRoundRect(bodyRect, r * 0.55f, r * 0.55f, bodyPaint)
+        canvas.drawRoundRect(bodyRect, r * 0.55f, r * 0.55f, cartoonOutlinePaint)
+
+        bodyRect.set(-r * 0.42f, r * 0.62f, r * 0.42f, r * 1.38f)
+        canvas.drawOval(bodyRect, secondaryPaint)
+
+        // 3. Cute Dangling Hind Paws
+        val kick = sin(stateTimer * 8f) * 3.5f * density
+        canvas.drawCircle(-r * 0.38f, r * 1.58f + kick, r * 0.22f, bodyPaint)
+        canvas.drawCircle(-r * 0.38f, r * 1.58f + kick, r * 0.22f, cartoonOutlinePaint)
+        canvas.drawCircle(r * 0.38f, r * 1.58f - kick, r * 0.22f, bodyPaint)
+        canvas.drawCircle(r * 0.38f, r * 1.58f - kick, r * 0.22f, cartoonOutlinePaint)
+
+        // 4. Pointed Left & Right Cat Ears
+        for (side in listOf(-1f, 1f)) {
+            earPath.reset()
+            earPath.moveTo(side * r * 0.25f, -r * 0.35f)
+            earPath.lineTo(side * r * 0.92f, -r * 0.95f)
+            earPath.lineTo(side * r * 0.95f, r * 0.05f)
+            earPath.close()
+            canvas.drawPath(earPath, bodyPaint)
+            canvas.drawPath(earPath, cartoonOutlinePaint)
+
+            // Pink Inner Ear Triangle
+            earPath.reset()
+            earPath.moveTo(side * r * 0.38f, -r * 0.28f)
+            earPath.lineTo(side * r * 0.80f, -r * 0.75f)
+            earPath.lineTo(side * r * 0.82f, -r * 0.05f)
+            earPath.close()
+            canvas.drawPath(earPath, secondaryPaint)
+        }
+
+        // 5. Rounded Cat Head + Calico Ginger Forehead Spot
+        bodyRect.set(-r, -r * 0.48f, r, r * 0.78f)
+        canvas.drawRoundRect(bodyRect, r * 0.75f, r * 0.75f, bodyPaint)
+
+        // Calico Ginger Patch on Right Brow
+        bodyRect.set(r * 0.1f, -r * 0.45f, r * 0.85f, r * 0.05f)
+        canvas.drawArc(bodyRect, 200f, 140f, true, accentPaint)
+
+        bodyRect.set(-r, -r * 0.48f, r, r * 0.78f)
+        canvas.drawRoundRect(bodyRect, r * 0.75f, r * 0.75f, cartoonOutlinePaint)
+
+        // 6. Red Collar + Golden Bell
+        bodyRect.set(-r * 0.62f, r * 0.58f, r * 0.62f, r * 0.76f)
+        canvas.drawRoundRect(bodyRect, 4f * density, 4f * density, accentPaint)
+        canvas.drawRoundRect(bodyRect, 4f * density, 4f * density, cartoonOutlinePaint)
+
+        // 7. Studio Anime Eyes + Catchlights + Whiskers + 'w' Cat Mouth
+        drawStudioEyes(canvas, r, yCenter = r * 0.12f, isCatMouth = true)
+
+        // Whiskers
+        val whiskerWidth = cartoonOutlinePaint.strokeWidth
+        cartoonOutlinePaint.strokeWidth = 1.6f * density
+        for (side in listOf(-1f, 1f)) {
+            canvas.drawLine(side * r * 0.72f, r * 0.18f, side * r * 1.18f, r * 0.10f, cartoonOutlinePaint)
+            canvas.drawLine(side * r * 0.72f, r * 0.28f, side * r * 1.20f, r * 0.28f, cartoonOutlinePaint)
+        }
+        cartoonOutlinePaint.strokeWidth = whiskerWidth
+
+        // 8. Front Paws Reaching Up to Grip the Rope Knot at (0, 0)
+        for (side in listOf(-1f, 1f)) {
+            canvas.drawCircle(side * r * 0.20f, -r * 0.15f, r * 0.22f, bodyPaint)
+            canvas.drawCircle(side * r * 0.20f, -r * 0.15f, r * 0.22f, cartoonOutlinePaint)
+            canvas.drawCircle(side * r * 0.20f, -r * 0.15f, r * 0.10f, secondaryPaint)
+        }
+    }
+
+    private fun drawShadowNinja(canvas: Canvas, r: Float) {
+        // 1. Flowing Dual-Tail Crimson Ninja Scarf
+        val wave1 = sin(stateTimer * 9.5f) * 14f * density
+        val wave2 = cos(stateTimer * 9.5f) * 19f * density
+        scarfOrTailPath.reset()
+        scarfOrTailPath.moveTo(0f, r * 0.45f)
+        scarfOrTailPath.cubicTo(
+            -r * 1.3f, r * 0.2f + wave1 * 0.5f,
+            -r * 2.1f, r * 0.5f + wave2,
+            -r * 2.85f, r * 0.85f + wave1
+        )
+        scarfOrTailPath.lineTo(-r * 2.45f, r * 1.25f + wave1)
+        scarfOrTailPath.close()
+        canvas.drawPath(scarfOrTailPath, accentPaint)
+        canvas.drawPath(scarfOrTailPath, cartoonOutlinePaint)
+
+        // 2. Diagonal Katana Hilt Strapped Behind Back
+        canvas.save()
+        canvas.rotate(32f)
+        bodyRect.set(-r * 0.15f, -r * 0.95f, r * 0.15f, r * 0.6f)
+        canvas.drawRoundRect(bodyRect, 3f * density, 3f * density, accentPaint)
+        canvas.drawRoundRect(bodyRect, 3f * density, 3f * density, cartoonOutlinePaint)
+        canvas.restore()
+
+        // 3. Chibi Ninja Torso & Stepping Legs
+        bodyRect.set(-r * 0.65f, r * 0.45f, r * 0.65f, r * 1.48f)
+        canvas.drawRoundRect(bodyRect, r * 0.45f, r * 0.45f, bodyPaint)
+        canvas.drawRoundRect(bodyRect, r * 0.45f, r * 0.45f, cartoonOutlinePaint)
+
+        // 4. Rounded Ninja Hood Head
+        bodyRect.set(-r * 0.95f, -r * 0.42f, r * 0.95f, r * 0.78f)
+        canvas.drawRoundRect(bodyRect, r * 0.72f, r * 0.72f, bodyPaint)
+        canvas.drawRoundRect(bodyRect, r * 0.72f, r * 0.72f, cartoonOutlinePaint)
+
+        // 5. Warm Skin-Tone Face Slit Opening
+        bodyRect.set(-r * 0.72f, -r * 0.04f, r * 0.72f, r * 0.36f)
+        canvas.drawRoundRect(bodyRect, r * 0.22f, r * 0.22f, secondaryPaint)
+        canvas.drawRoundRect(bodyRect, r * 0.22f, r * 0.22f, cartoonOutlinePaint)
+
+        // 6. Crimson Headband + Metallic Forehead Plate
+        bodyRect.set(-r * 0.96f, -r * 0.26f, r * 0.96f, -r * 0.02f)
+        canvas.drawRoundRect(bodyRect, 4f * density, 4f * density, accentPaint)
+        canvas.drawRoundRect(bodyRect, 4f * density, 4f * density, cartoonOutlinePaint)
+
+        bodyRect.set(-r * 0.35f, -r * 0.22f, r * 0.35f, -r * 0.06f)
+        canvas.drawRoundRect(bodyRect, 2f * density, 2f * density, highlightPaint)
+
+        // 7. Expressive Glowing Ninja Eyes
+        drawStudioEyes(canvas, r, yCenter = r * 0.16f, isCatMouth = false)
+
+        // 8. Ninja Hands Gripping the Rope Knot
+        for (side in listOf(-1f, 1f)) {
+            canvas.drawCircle(side * r * 0.18f, -r * 0.14f, r * 0.19f, bodyPaint)
+            canvas.drawCircle(side * r * 0.18f, -r * 0.14f, r * 0.19f, cartoonOutlinePaint)
+        }
+    }
+
+    private fun drawAstroBot(canvas: Canvas, r: Float) {
+        // 1. Pulsing Jetpack Thruster Flame Under Bot
+        val flameLen = (0.35f + abs(sin(stateTimer * 28f)) * 0.45f) * r
+        earPath.reset()
+        earPath.moveTo(-r * 0.32f, r * 1.42f)
+        earPath.lineTo(0f, r * 1.42f + flameLen)
+        earPath.lineTo(r * 0.32f, r * 1.42f)
+        earPath.close()
+        canvas.drawPath(earPath, accentPaint)
+
+        // 2. Glossy Ceramic Bot Body Pod
+        bodyRect.set(-r * 0.68f, r * 0.50f, r * 0.68f, r * 1.45f)
+        canvas.drawRoundRect(bodyRect, r * 0.5f, r * 0.5f, bodyPaint)
+        canvas.drawRoundRect(bodyRect, r * 0.5f, r * 0.5f, cartoonOutlinePaint)
+
+        // Glowing Chest Core
+        canvas.drawCircle(0f, r * 0.98f, r * 0.20f, eyePaint)
+        canvas.drawCircle(0f, r * 0.98f, r * 0.20f, cartoonOutlinePaint)
+
+        // 3. Top Radar Antenna + Glowing Orb
+        canvas.drawLine(0f, -r * 0.45f, 0f, -r * 0.82f, cartoonOutlinePaint)
+        canvas.drawCircle(0f, -r * 0.88f, r * 0.16f, accentPaint)
+        canvas.drawCircle(0f, -r * 0.88f, r * 0.16f, cartoonOutlinePaint)
+
+        // 4. Rounded Astro Helmet + Side Ear Cups
+        bodyRect.set(-r * 1.12f, -r * 0.05f, r * 1.12f, r * 0.35f)
+        canvas.drawRoundRect(bodyRect, r * 0.2f, r * 0.2f, accentPaint)
+        canvas.drawRoundRect(bodyRect, r * 0.2f, r * 0.2f, cartoonOutlinePaint)
+
+        bodyRect.set(-r * 0.98f, -r * 0.46f, r * 0.98f, r * 0.76f)
+        canvas.drawRoundRect(bodyRect, r * 0.68f, r * 0.68f, bodyPaint)
+        canvas.drawRoundRect(bodyRect, r * 0.68f, r * 0.68f, cartoonOutlinePaint)
+
+        // 5. Dark Curved OLED Glass Visor
+        bodyRect.set(-r * 0.78f, -r * 0.22f, r * 0.78f, r * 0.52f)
+        canvas.drawRoundRect(bodyRect, r * 0.42f, r * 0.42f, secondaryPaint)
+        canvas.drawRoundRect(bodyRect, r * 0.42f, r * 0.42f, cartoonOutlinePaint)
+
+        // Visor Glass Reflection Highlight
+        canvas.drawCircle(-r * 0.52f, -r * 0.06f, r * 0.08f, highlightPaint)
+
+        // 6. Glowing Digital Visor Eyes
+        drawStudioEyes(canvas, r, yCenter = r * 0.15f, isCatMouth = false)
+
+        // 7. Clamp Hands Gripping the Rope Knot
+        for (side in listOf(-1f, 1f)) {
+            canvas.drawCircle(side * r * 0.18f, -r * 0.14f, r * 0.18f, accentPaint)
+            canvas.drawCircle(side * r * 0.18f, -r * 0.14f, r * 0.18f, cartoonOutlinePaint)
+        }
+    }
+
+    private fun drawKitsuneSpirit(canvas: Canvas, r: Float) {
+        // 1. Giant Fluffy Fox Tail with Cream Tip
+        val sway = sin(stateTimer * 5.5f) * 12f * density
+        scarfOrTailPath.reset()
+        scarfOrTailPath.moveTo(0f, r * 1.1f)
+        scarfOrTailPath.cubicTo(
+            -r * 1.5f, r * 1.4f,
+            -r * 2.0f, r * 0.3f + sway,
+            -r * 1.3f, -r * 0.2f + sway
+        )
+        scarfOrTailPath.cubicTo(
+            -r * 0.8f, r * 0.1f + sway,
+            -r * 0.6f, r * 0.8f,
+            0f, r * 1.1f
+        )
+        scarfOrTailPath.close()
+        canvas.drawPath(scarfOrTailPath, bodyPaint)
+        canvas.drawPath(scarfOrTailPath, cartoonOutlinePaint)
+
+        // 2. Fox Body + Cream Chest Fur
+        bodyRect.set(-r * 0.68f, r * 0.42f, r * 0.68f, r * 1.50f)
+        canvas.drawRoundRect(bodyRect, r * 0.52f, r * 0.52f, bodyPaint)
+        canvas.drawRoundRect(bodyRect, r * 0.52f, r * 0.52f, cartoonOutlinePaint)
+
+        bodyRect.set(-r * 0.40f, r * 0.58f, r * 0.40f, r * 1.32f)
+        canvas.drawOval(bodyRect, secondaryPaint)
+
+        // 3. Oversized Pointed Kitsune Ears
+        for (side in listOf(-1f, 1f)) {
+            earPath.reset()
+            earPath.moveTo(side * r * 0.20f, -r * 0.35f)
+            earPath.lineTo(side * r * 1.08f, -r * 1.12f)
+            earPath.lineTo(side * r * 0.95f, r * 0.08f)
+            earPath.close()
+            canvas.drawPath(earPath, bodyPaint)
+            canvas.drawPath(earPath, cartoonOutlinePaint)
+
+            earPath.reset()
+            earPath.moveTo(side * r * 0.35f, -r * 0.28f)
+            earPath.lineTo(side * r * 0.92f, -r * 0.88f)
+            earPath.lineTo(side * r * 0.82f, -r * 0.02f)
+            earPath.close()
+            canvas.drawPath(earPath, secondaryPaint)
+        }
+
+        // 4. Fox Head + Cream Cheek Fur
+        bodyRect.set(-r * 0.96f, -r * 0.46f, r * 0.96f, r * 0.78f)
+        canvas.drawRoundRect(bodyRect, r * 0.72f, r * 0.72f, bodyPaint)
+        canvas.drawRoundRect(bodyRect, r * 0.72f, r * 0.72f, cartoonOutlinePaint)
+
+        // 5. Golden Shrine Bell at Neck
+        canvas.drawCircle(0f, r * 0.68f, r * 0.20f, accentPaint)
+        canvas.drawCircle(0f, r * 0.68f, r * 0.20f, cartoonOutlinePaint)
+
+        // 6. Expressive Eyes + Cute Nose
+        drawStudioEyes(canvas, r, yCenter = r * 0.14f, isCatMouth = true)
+
+        // 7. Paws Gripping the Rope Knot
+        for (side in listOf(-1f, 1f)) {
+            canvas.drawCircle(side * r * 0.20f, -r * 0.15f, r * 0.20f, secondaryPaint)
+            canvas.drawCircle(side * r * 0.20f, -r * 0.15f, r * 0.20f, cartoonOutlinePaint)
+        }
+    }
+
+    private fun drawStudioEyes(
+        canvas: Canvas,
+        r: Float,
+        yCenter: Float,
+        isCatMouth: Boolean
+    ) {
+        // Rosy Cartoon Blush Cheeks
+        canvas.drawOval(
+            -r * 0.72f, yCenter + r * 0.08f,
+            -r * 0.38f, yCenter + r * 0.28f,
+            blushPaint
+        )
+        canvas.drawOval(
+            r * 0.38f, yCenter + r * 0.08f,
+            r * 0.72f, yCenter + r * 0.28f,
+            blushPaint
+        )
+
+        val isHappyArc = state == CharacterState.TRICK_BACKFLIP ||
+                state == CharacterState.DANCE_MUSIC_GROOVE ||
+                state == CharacterState.REACT_CHARGING_SURGE
+
+        if (isBlinking || isHappyArc) {
+            // Happy Curved Anime Eye Arcs (^ ^)
+            for (side in listOf(-1f, 1f)) {
+                val cx = side * r * 0.38f
+                bodyRect.set(cx - r * 0.18f, yCenter - r * 0.12f, cx + r * 0.18f, yCenter + r * 0.14f)
+                canvas.drawArc(bodyRect, 200f, 140f, false, cartoonOutlinePaint)
+            }
+        } else {
+            // Big Glossy Studio Eyes with Dual White Specular Catchlights
+            val eyeW = r * 0.20f
+            val eyeH = r * 0.24f
+            for (side in listOf(-1f, 1f)) {
+                val cx = side * r * 0.38f
+                bodyRect.set(cx - eyeW, yCenter - eyeH, cx + eyeW, yCenter + eyeH)
+                canvas.drawOval(bodyRect, eyePaint)
+
+                // Large top-left catchlight + tiny bottom-right catchlight
+                canvas.drawCircle(cx - eyeW * 0.32f, yCenter - eyeH * 0.32f, eyeW * 0.38f, highlightPaint)
+                canvas.drawCircle(cx + eyeW * 0.30f, yCenter + eyeH * 0.30f, eyeW * 0.18f, highlightPaint)
+            }
+        }
+
+        if (isCatMouth) {
+            // Tiny Nose + 'w' Cat Mouth
+            canvas.drawCircle(0f, yCenter + r * 0.14f, r * 0.07f, cartoonOutlinePaint)
+            bodyRect.set(-r * 0.18f, yCenter + r * 0.14f, 0f, yCenter + r * 0.28f)
+            canvas.drawArc(bodyRect, 0f, 180f, false, cartoonOutlinePaint)
+            bodyRect.set(0f, yCenter + r * 0.14f, r * 0.18f, yCenter + r * 0.28f)
+            canvas.drawArc(bodyRect, 0f, 180f, false, cartoonOutlinePaint)
+        }
     }
 
     private fun drawStateVfxOverlays(canvas: Canvas) {
@@ -823,7 +1143,7 @@ class CompanionOverlayView(
                 canvas.drawText(
                     "⚡ $currentBatteryPct%",
                     charX,
-                    charY + 38f * density,
+                    charY + 42f * density,
                     batteryTextPaint
                 )
             }
@@ -832,7 +1152,7 @@ class CompanionOverlayView(
                 val blinkAlpha = ((sin(stateTimer * 10f) + 1f) * 0.5f * 255).toInt().coerceIn(50, 255)
                 lowBatteryPaint.alpha = blinkAlpha
                 val bx = charX - 12f * density
-                val by = charY - 36f * density
+                val by = charY - 38f * density
                 bodyRect.set(bx, by, bx + 24f * density, by + 12f * density)
                 canvas.drawRoundRect(bodyRect, 3f * density, 3f * density, lowBatteryPaint)
             }
@@ -842,7 +1162,7 @@ class CompanionOverlayView(
                 cutoutRingPaint.alpha = (220 * (1f - ((stateTimer * 28f) % 26f) / 26f)).toInt()
                 canvas.drawCircle(rope.anchorX, rope.anchorY, pulseRadius, cutoutRingPaint)
 
-                val badgeY = charY - 34f * density + sin(stateTimer * 10f) * 3f * density
+                val badgeY = charY - 36f * density + sin(stateTimer * 10f) * 3f * density
                 bodyRect.set(
                     charX - 14f * density,
                     badgeY - 9f * density,
@@ -850,23 +1170,24 @@ class CompanionOverlayView(
                     badgeY + 9f * density
                 )
                 canvas.drawRoundRect(bodyRect, 6f * density, 6f * density, alertBadgePaint)
+                canvas.drawRoundRect(bodyRect, 6f * density, 6f * density, cartoonOutlinePaint)
             }
 
             CharacterState.DANCE_MUSIC_GROOVE -> {
                 canvas.save()
                 canvas.translate(charX, charY)
                 canvas.rotate(charRotationDeg)
-                val r = 18.5f * density
-                bodyRect.set(-r, -r * 0.95f, r, r * 0.5f)
+                val r = 20f * density
+                bodyRect.set(-r, -r * 0.65f, r, r * 0.6f)
                 canvas.drawArc(bodyRect, 180f, 180f, false, headphonePaint)
-                canvas.drawCircle(-r, -r * 0.15f, 4.5f * density, eyePaint)
-                canvas.drawCircle(r, -r * 0.15f, 4.5f * density, eyePaint)
+                canvas.drawCircle(-r, r * 0.08f, 5f * density, accentPaint)
+                canvas.drawCircle(r, r * 0.08f, 5f * density, accentPaint)
                 canvas.restore()
 
                 for (i in 0..1) {
                     val phase = (stateTimer * 0.9f + i * 0.5f) % 1.0f
-                    val noteX = charX + (if (i == 0) -1 else 1) * (18f + phase * 16f) * density + sin(phase * 6f) * 5f * density
-                    val noteY = charY - (15f + phase * 42f) * density
+                    val noteX = charX + (if (i == 0) -1 else 1) * (20f + phase * 16f) * density + sin(phase * 6f) * 5f * density
+                    val noteY = charY - (18f + phase * 42f) * density
                     notePaint.alpha = ((1f - phase) * 235).toInt()
                     canvas.drawText(if (i == 0) "♪" else "♫", noteX, noteY, notePaint)
                 }
