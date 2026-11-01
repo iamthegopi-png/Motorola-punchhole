@@ -69,14 +69,14 @@ class CompanionOverlayView(
     private val ropeShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
         color = Color.argb(90, 0, 0, 0)
     }
 
     private val ropePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
         color = Color.parseColor("#E2C08D")
     }
 
