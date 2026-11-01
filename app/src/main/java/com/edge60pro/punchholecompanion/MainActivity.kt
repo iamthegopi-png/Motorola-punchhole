@@ -52,7 +52,7 @@ fun CompanionDashboardScreen() {
             fontWeight = FontWeight.Bold
         )
         Text(
-            text = "Tap the punch hole to summon/dismiss. Single-tap the character for a trick, drag to slingshot, or double-tap to send it back up.",
+            text = "Studio-grade cartoon companions that automatically swap on every visit with zero idle battery drain.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -77,7 +77,7 @@ fun CompanionDashboardScreen() {
                         onClick = { CompanionRepository.manualCommand.value = "TOGGLE" },
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("Summon / Hide")
+                        Text("Summon / Swap")
                     }
                 }
                 OutlinedButton(
@@ -97,13 +97,35 @@ fun CompanionDashboardScreen() {
             }
         }
 
-        // Card 2: Character Skin Picker
+        // Card 2: Studio Character Roster & Auto-Swap Toggle
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("2. Character Theme & Rope Style", fontWeight = FontWeight.SemiBold)
+                Text("2. Studio Cartoon Characters", fontWeight = FontWeight.SemiBold)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Auto-Swap Character Every Visit")
+                        Text(
+                            "Rotates between Cat, Ninja, Astro-Bot & Kitsune each time",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = config.autoSwapCharacters,
+                        onCheckedChange = { enabled ->
+                            CompanionRepository.update(context) { it.copy(autoSwapCharacters = enabled) }
+                        }
+                    )
+                }
+
                 CharacterSkin.values().toList().chunked(2).forEach { rowSkins ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -113,7 +135,9 @@ fun CompanionDashboardScreen() {
                             FilterChip(
                                 selected = config.skin == skinOption,
                                 onClick = {
-                                    CompanionRepository.update(context) { it.copy(skin = skinOption) }
+                                    CompanionRepository.update(context) {
+                                        it.copy(skin = skinOption, autoSwapCharacters = false)
+                                    }
                                 },
                                 label = { Text(skinOption.displayName) },
                                 modifier = Modifier.weight(1f)
@@ -124,13 +148,13 @@ fun CompanionDashboardScreen() {
             }
         }
 
-        // Card 3: Rope Size Customisation
+        // Card 3: Braided Rope Customisation
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text("3. Rope Size Customisation", fontWeight = FontWeight.SemiBold)
+                Text("3. Braided Rope Customisation", fontWeight = FontWeight.SemiBold)
 
                 Text("Rope Length: ${config.ropeLengthDp.roundToInt()} dp")
                 Slider(
@@ -147,7 +171,7 @@ fun CompanionDashboardScreen() {
                     onValueChange = { value ->
                         CompanionRepository.update(context) { it.copy(ropeThicknessDp = value) }
                     },
-                    valueRange = 1.5f..8.0f
+                    valueRange = 2.0f..8.0f
                 )
             }
         }
