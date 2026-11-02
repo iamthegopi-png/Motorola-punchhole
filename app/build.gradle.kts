@@ -8,11 +8,28 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.edge60pro.punchholecompanion"
+        applicationId = "com.edge60pro.companion.studio"
         minSdk = 31
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "2.0-Studio"
+    }
+
+    signingConfigs {
+        create("release") {
+            storeFile = file("release-key.jks")
+            storePassword = "Edge60Pro2026"
+            keyAlias = "companion_key"
+            keyPassword = "Edge60Pro2026"
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            isDebuggable = false
+            signingConfig = signingConfigs.getByName("release")
+        }
     }
 
     compileOptions {
