@@ -19,16 +19,26 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Generate Production Release Keystore
+        run: |
+          keytool -genkeypair -v \
+            -keystore app/release-key.jks \
+            -alias companion_key \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass Edge60Pro2026 -keypass Edge60Pro2026 \
+            -dname "CN=MotoStudioCompanion, OU=Mobile, O=EdgeStudio, L=Mumbai, S=MH, C=IN"
+
       - name: Setup Gradle 8.7
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
 
-      - name: Compile Debug APK
-        run: gradle assembleDebug
+      - name: Compile Signed Release APK
+        run: gradle assembleRelease
 
-      - name: Upload Compiled APK Artifact
+      - name: Upload Signed Release APK
         uses: actions/upload-artifact@v4
         with:
-          name: Moto-Edge60Pro-PunchCompanion-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: Moto-Edge60Pro-PunchCompanion-Release-APK
+          path: app/build/outputs/apk/release/app-release.apk
+          
