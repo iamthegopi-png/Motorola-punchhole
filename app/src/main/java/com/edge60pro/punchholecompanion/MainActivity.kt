@@ -1,10 +1,12 @@
 package com.edge60pro.punchholecompanion
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -13,8 +15,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
@@ -22,19 +26,35 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         CompanionRepository.init(this)
 
+        if (Settings.canDrawOverlays(this)) {
+            startCompanionService()
+        }
+
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    CompanionDashboardScreen()
+                    CompanionDashboardScreen(onStartService = { startCompanionService() })
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (Settings.canDrawOverlays(this)) {
+            startCompanionService()
+        }
+    }
+
+    private fun startCompanionService() {
+        val intent = Intent(this, PunchHoleCompanionService::class.java)
+        ContextCompat.startForegroundService(this, intent)
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CompanionDashboardScreen() {
+fun CompanionDashboardScreen(onStartService: () -> Unit) {
     val context = LocalContext.current
     val config by CompanionRepository.config.collectAsState()
 
@@ -45,54 +65,72 @@ fun CompanionDashboardScreen() {
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
-        Spacer(modifier = Modifier.height(24.dp))
-        Text(
-            text = "Moto Edge 60 Pro Cutout Companion",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold
-        )
-        Text(
-            text = "Studio-grade cartoon companions that automatically swap on every visit with zero idle battery drain.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        Spacer(modifier = Modifier.height(16.dp))
 
-        // Card 1: Permissions & Live Test
+        // App Header with Studio Logo
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Image(
+                painter = painterResource(id = R.drawable.ic_app_logo),
+                contentDescription = "App Logo",
+                modifier = Modifier.size(64.dp)
+            )
+            Column {
+                Text(
+                    text = "Edge 60 Punch Companion",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "UPI & Banking Safe Studio Edition",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+
+        // Card 1: Banking-Safe Overlay Controls
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("1. Permissions & Live Preview", fontWeight = FontWeight.SemiBold)
+                Text("1. Overlay & Banking Stealth Mode", fontWeight = FontWeight.SemiBold)
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
                         onClick = {
-                            context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                            if (!Settings.canDrawOverlays(context)) {
+                                val intent = Intent(
+                                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    Uri.parse("package:${context.packageName}")
+                                )
+                                context.startActivity(intent)
+                            } else {
+                                onStartService()
+                                CompanionRepository.manualCommand.value = "TOGGLE"
+                            }
                         },
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("Enable Overlay")
+                        Text("Enable / Summon")
                     }
                     FilledTonalButton(
-                        onClick = { CompanionRepository.manualCommand.value = "TOGGLE" },
+                        onClick = {
+                            onStartService()
+                            CompanionRepository.manualCommand.value = "TRICK"
+                        },
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("Summon / Swap")
+                        Text("Trigger Trick")
                     }
                 }
                 OutlinedButton(
-                    onClick = {
-                        context.startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
-                    },
+                    onClick = { CompanionRepository.manualCommand.value = "PAUSE_BANKING" },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Grant Notification & Music Access")
-                }
-                OutlinedButton(
-                    onClick = { CompanionRepository.manualCommand.value = "TRICK" },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Trigger Studio Trick Now")
+                    Text("Pause Overlay for UPI / Banking (5 Min)")
                 }
             }
         }
@@ -228,21 +266,7 @@ fun CompanionDashboardScreen() {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("React to Notifications")
-                    Switch(
-                        checked = config.reactToNotifications,
-                        onCheckedChange = { enabled ->
-                            CompanionRepository.update(context) { it.copy(reactToNotifications = enabled) }
-                        }
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Dance to Music")
+                    Text("Dance to Music (Zero-Permission)")
                     Switch(
                         checked = config.danceToMusic,
                         onCheckedChange = { enabled ->
