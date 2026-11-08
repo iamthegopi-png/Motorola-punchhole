@@ -1,5 +1,6 @@
 package com.edge60pro.punchholecompanion
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -21,6 +22,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.*
 import androidx.core.content.ContextCompat
@@ -28,6 +30,18 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
 import kotlin.math.abs
 import kotlin.math.hypot
+
+/**
+ * Automatically starts the companion service when the phone boots or the app updates.
+ */
+class CompanionBootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        if (Settings.canDrawOverlays(context)) {
+            val serviceIntent = Intent(context, PunchHoleCompanionService::class.java)
+            runCatching { ContextCompat.startForegroundService(context, serviceIntent) }
+        }
+    }
+}
 
 class PunchHoleCompanionService : Service() {
 
@@ -49,6 +63,7 @@ class PunchHoleCompanionService : Service() {
     private var isCameraInUse = false
     private var isPausedForBanking = false
     private var areWindowsAttached = false
+    private var lastSpawnElapsedMs = 0L
 
     private var baseCutoutX = 540
     private var baseCutoutY = 48
@@ -56,6 +71,7 @@ class PunchHoleCompanionService : Service() {
     companion object {
         const val ACTION_PAUSE_FOR_BANKING = "com.edge60pro.ACTION_PAUSE_BANKING"
         const val ACTION_RESUME_COMPANION = "com.edge60pro.ACTION_RESUME_COMPANION"
+        const val ACTION_SUMMON_NOW = "com.edge60pro.ACTION_SUMMON_NOW"
         private const val CHANNEL_ID = "companion_stealth_channel"
         private const val NOTIF_ID = 1001
     }
@@ -71,6 +87,20 @@ class PunchHoleCompanionService : Service() {
                 Intent.ACTION_SCREEN_ON -> {
                     isScreenOn = true
                     restartAppearanceTimer()
+                }
+                Intent.ACTION_USER_PRESENT -> {
+                    // Greet user when unlocking the phone if enough time has passed
+                    isScreenOn = true
+                    val cfg = CompanionRepository.config.value
+                    val now = SystemClock.elapsedRealtime()
+                    val cooldownMs = if (cfg.intervalMinutes > 0) cfg.intervalMinutes * 60_000L else 180_000L
+                    if (!isCameraInUse && !isPausedForBanking &&
+                        overlayView?.state == CharacterState.HIDDEN &&
+                        (now - lastSpawnElapsedMs) >= cooldownMs
+                    ) {
+                        lastSpawnElapsedMs = now
+                        overlayView?.spawnFromPunchHole("Welcome back! 👋")
+                    }
                 }
             }
         }
@@ -103,7 +133,6 @@ class PunchHoleCompanionService : Service() {
         }
     }
 
-    // Zero-Permission Music Detection (Replaces NotificationListenerService)
     private val audioPlaybackCallback = object : AudioManager.AudioPlaybackCallback() {
         override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>?) {
             super.onPlaybackConfigChanged(configs)
@@ -157,6 +186,7 @@ class PunchHoleCompanionService : Service() {
             IntentFilter().apply {
                 addAction(Intent.ACTION_SCREEN_OFF)
                 addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_USER_PRESENT)
             },
             ContextCompat.RECEIVER_EXPORTED
         )
@@ -185,6 +215,10 @@ class PunchHoleCompanionService : Service() {
         when (intent?.action) {
             ACTION_PAUSE_FOR_BANKING -> pauseOverlayForBanking(minutes = 5)
             ACTION_RESUME_COMPANION -> resumeOverlayFromBanking()
+            ACTION_SUMMON_NOW -> {
+                if (isPausedForBanking) resumeOverlayFromBanking()
+                overlayView?.toggleCharacterVisibility()
+            }
             else -> {
                 if (!areWindowsAttached && !isPausedForBanking && Settings.canDrawOverlays(this)) {
                     attachWindowsToScreen()
@@ -194,6 +228,26 @@ class PunchHoleCompanionService : Service() {
         return START_STICKY
     }
 
+    /**
+     * Prevents the service from dying when the user swipes the app away from Recent Apps.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        val restartIntent = Intent(applicationContext, PunchHoleCompanionService::class.java)
+        val pendingIntent = PendingIntent.getService(
+            applicationContext,
+            101,
+            restartIntent,
+            PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
+        alarmManager.set(
+            AlarmManager.ELAPSED_REALTIME,
+            SystemClock.elapsedRealtime() + 900L,
+            pendingIntent
+        )
+        super.onTaskRemoved(rootIntent)
+    }
+
     private fun startStealthForegroundNotification() {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         val channel = NotificationChannel(
@@ -201,7 +255,7 @@ class PunchHoleCompanionService : Service() {
             "Punch Hole Companion Controls",
             NotificationManager.IMPORTANCE_LOW
         ).apply {
-            description = "Quick controls to pause overlay during UPI or banking payments"
+            description = "Keeps companion alive & provides 1-tap UPI Stealth pause"
             setShowBadge(false)
         }
         nm.createNotificationChannel(channel)
@@ -215,41 +269,48 @@ class PunchHoleCompanionService : Service() {
     }
 
     private fun buildControlNotification(): Notification {
-        val actionIntent = Intent(this, PunchHoleCompanionService::class.java).apply {
+        val stealthIntent = Intent(this, PunchHoleCompanionService::class.java).apply {
             action = if (isPausedForBanking) ACTION_RESUME_COMPANION else ACTION_PAUSE_FOR_BANKING
         }
-        val pendingAction = PendingIntent.getService(
+        val pendingStealth = PendingIntent.getService(
             this,
             0,
-            actionIntent,
+            stealthIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val summonIntent = Intent(this, PunchHoleCompanionService::class.java).apply {
+            action = ACTION_SUMMON_NOW
+        }
+        val pendingSummon = PendingIntent.getService(
+            this,
+            1,
+            summonIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         val title = if (isPausedForBanking) {
-            "Banking Stealth Active (Overlay Removed)"
+            "Banking Stealth Active (Overlay Hidden)"
         } else {
-            "Punch Hole Companion Ready"
+            "Punch Hole Companion Active"
         }
         val subtitle = if (isPausedForBanking) {
-            "Safe to use UPI & Banking apps. Tap button to resume."
+            "Safe for UPI & Banking. Tap Resume when done."
         } else {
-            "Tap 'Pause for UPI' before opening strict banking apps."
+            "Tap punch hole anytime, or use quick buttons below."
         }
-        val buttonLabel = if (isPausedForBanking) "Resume Companion" else "Pause for UPI (5m)"
+        val stealthLabel = if (isPausedForBanking) "Resume" else "Pause for UPI"
 
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_app_logo)
             .setContentTitle(title)
             .setContentText(subtitle)
             .setOngoing(true)
-            .addAction(Notification.Action.Builder(null, buttonLabel, pendingAction).build())
+            .addAction(Notification.Action.Builder(null, "Summon / Trick", pendingSummon).build())
+            .addAction(Notification.Action.Builder(null, stealthLabel, pendingStealth).build())
             .build()
     }
 
-    /**
-     * Completely detaches all overlay windows from WindowManager so strict UPI/banking apps
-     * detect zero screen overlays during payment.
-     */
     private fun pauseOverlayForBanking(minutes: Int) {
         isPausedForBanking = true
         stealthResumeJob?.cancel()
@@ -321,6 +382,7 @@ class PunchHoleCompanionService : Service() {
             setBackgroundColor(Color.TRANSPARENT)
             setOnClickListener {
                 if (!isCameraInUse && !isPausedForBanking) {
+                    lastSpawnElapsedMs = SystemClock.elapsedRealtime()
                     overlayView?.toggleCharacterVisibility()
                 }
             }
@@ -518,6 +580,7 @@ class PunchHoleCompanionService : Service() {
                 when (cmd) {
                     "TOGGLE" -> {
                         if (isPausedForBanking) resumeOverlayFromBanking()
+                        lastSpawnElapsedMs = SystemClock.elapsedRealtime()
                         overlayView?.toggleCharacterVisibility()
                     }
                     "TRICK" -> {
@@ -525,6 +588,7 @@ class PunchHoleCompanionService : Service() {
                         val view = overlayView
                         if (view != null) {
                             if (view.state == CharacterState.HIDDEN) {
+                                lastSpawnElapsedMs = SystemClock.elapsedRealtime()
                                 view.spawnFromPunchHole()
                             } else {
                                 view.triggerSingleTapTrick(
@@ -545,12 +609,16 @@ class PunchHoleCompanionService : Service() {
         val minutes = CompanionRepository.config.value.intervalMinutes
         if (minutes <= 0 || !isScreenOn) return
 
+        val intervalMs = minutes * 60_000L
         timerJob = serviceScope.launch {
             while (isActive && isScreenOn) {
-                delay(minutes * 60_000L)
+                delay(20_000L) // Lightweight check every 20s against monotonic hardware clock
+                val now = SystemClock.elapsedRealtime()
                 if (isScreenOn && !isCameraInUse && !isPausedForBanking &&
-                    overlayView?.state == CharacterState.HIDDEN
+                    overlayView?.state == CharacterState.HIDDEN &&
+                    (now - lastSpawnElapsedMs) >= intervalMs
                 ) {
+                    lastSpawnElapsedMs = now
                     overlayView?.spawnFromPunchHole()
                 }
             }
