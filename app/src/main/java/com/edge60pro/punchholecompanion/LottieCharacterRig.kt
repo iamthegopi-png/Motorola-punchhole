@@ -49,6 +49,9 @@ class LottieCharacterRig(
             CharacterState.TRICK_BACKFLIP -> Triple("backflip", 0.95f, false)
             CharacterState.TRICK_BUNGEE_JUMP -> Triple("bungee", 1.25f, false)
             CharacterState.TRICK_SWING_WAVE -> Triple("swing_wave", 1.6f, true)
+            CharacterState.TRICK_TARZAN_SWING -> Triple("tarzan_swing", 2.4f, true)
+            CharacterState.TRICK_UPSIDE_DOWN -> Triple("upside_down", 3.8f, true)
+            CharacterState.TRICK_SMOKE_TELEPORT -> Triple("smoke_teleport", 0.55f, false)
             CharacterState.EDGE_WALKING -> Triple("edge_run", 0.65f, true)
             CharacterState.REACT_CHARGING_SURGE -> Triple("charging_surge", 1.2f, true)
             CharacterState.REACT_LOW_BATTERY -> Triple("low_battery_dizzy", 2.4f, true)
@@ -56,6 +59,7 @@ class LottieCharacterRig(
             CharacterState.DANCE_MUSIC_GROOVE -> Triple("music_dance", 1.2f, true)
             CharacterState.CLIMBING_UP -> Triple("climb_up", 0.85f, false)
             CharacterState.HIDDEN -> Triple("idle_hang", 1.0f, false)
+            else -> Triple("idle_hang", 1.0f, true)
         }
 
         clipDurationSec = durationSec
