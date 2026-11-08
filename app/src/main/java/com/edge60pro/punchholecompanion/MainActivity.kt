@@ -1,11 +1,16 @@
 package com.edge60pro.punchholecompanion
 
+import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -22,9 +27,22 @@ import androidx.core.content.ContextCompat
 import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
+
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {
+        if (Settings.canDrawOverlays(this)) {
+            startCompanionService()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         CompanionRepository.init(this)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
 
         if (Settings.canDrawOverlays(this)) {
             startCompanionService()
@@ -57,6 +75,10 @@ class MainActivity : ComponentActivity() {
 fun CompanionDashboardScreen(onStartService: () -> Unit) {
     val context = LocalContext.current
     val config by CompanionRepository.config.collectAsState()
+    val powerManager = remember { context.getSystemService(Context.POWER_SERVICE) as PowerManager }
+    var isBatteryUnrestricted by remember {
+        mutableStateOf(powerManager.isIgnoringBatteryOptimizations(context.packageName))
+    }
 
     Column(
         modifier = Modifier
@@ -67,7 +89,6 @@ fun CompanionDashboardScreen(onStartService: () -> Unit) {
     ) {
         Spacer(modifier = Modifier.height(16.dp))
 
-        // App Header with Studio Logo
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)
@@ -84,20 +105,20 @@ fun CompanionDashboardScreen(onStartService: () -> Unit) {
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "UPI & Banking Safe Studio Edition",
+                    text = "Tilt-Reactive Studio Edition • UPI Safe",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary
                 )
             }
         }
 
-        // Card 1: Banking-Safe Overlay Controls
+        // Card 1: Overlay, Keep-Alive & Banking Stealth Mode
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("1. Overlay & Banking Stealth Mode", fontWeight = FontWeight.SemiBold)
+                Text("1. Controls & Anti-Close Protection", fontWeight = FontWeight.SemiBold)
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
                         onClick = {
@@ -126,6 +147,30 @@ fun CompanionDashboardScreen(onStartService: () -> Unit) {
                         Text("Trigger Trick")
                     }
                 }
+
+                // 1-Tap Button to prevent Motorola from closing the app in the background
+                if (!isBatteryUnrestricted) {
+                    Button(
+                        onClick = {
+                            runCatching {
+                                val intent = Intent(
+                                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                    Uri.parse("package:${context.packageName}")
+                                )
+                                context.startActivity(intent)
+                            }
+                            isBatteryUnrestricted =
+                                powerManager.isIgnoringBatteryOptimizations(context.packageName)
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.tertiary
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("⚡ Stop Auto-Close (Allow Background Run)")
+                    }
+                }
+
                 OutlinedButton(
                     onClick = { CompanionRepository.manualCommand.value = "PAUSE_BANKING" },
                     modifier = Modifier.fillMaxWidth()
