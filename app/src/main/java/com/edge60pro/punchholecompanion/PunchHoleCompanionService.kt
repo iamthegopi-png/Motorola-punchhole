@@ -604,7 +604,7 @@ class PunchHoleCompanionService : Service() {
         }
     }
 
-    private fun restartAppearanceTimer() {
+        private fun restartAppearanceTimer() {
         stopAppearanceTimer()
         val minutes = CompanionRepository.config.value.intervalMinutes
         if (minutes <= 0 || !isScreenOn) return
@@ -612,7 +612,10 @@ class PunchHoleCompanionService : Service() {
         val intervalMs = minutes * 60_000L
         timerJob = serviceScope.launch {
             while (isActive && isScreenOn) {
-                delay(20_000L) // Lightweight check every 20s against monotonic hardware clock
+                val elapsed = SystemClock.elapsedRealtime() - lastSpawnElapsedMs
+                val waitMs = (intervalMs - elapsed).coerceIn(5_000L, intervalMs)
+                delay(waitMs)
+
                 val now = SystemClock.elapsedRealtime()
                 if (isScreenOn && !isCameraInUse && !isPausedForBanking &&
                     overlayView?.state == CharacterState.HIDDEN &&
@@ -624,6 +627,7 @@ class PunchHoleCompanionService : Service() {
             }
         }
     }
+
 
     private fun stopAppearanceTimer() {
         timerJob?.cancel()
