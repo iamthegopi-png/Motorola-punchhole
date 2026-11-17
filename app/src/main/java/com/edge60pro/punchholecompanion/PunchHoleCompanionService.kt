@@ -31,9 +31,6 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlin.math.abs
 import kotlin.math.hypot
 
-/**
- * Automatically starts the companion service when the phone boots or the app updates.
- */
 class CompanionBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (Settings.canDrawOverlays(context)) {
@@ -64,6 +61,7 @@ class PunchHoleCompanionService : Service() {
     private var isPausedForBanking = false
     private var areWindowsAttached = false
     private var lastSpawnElapsedMs = 0L
+    private var lastScreenGreetElapsedMs = 0L
 
     private var baseCutoutX = 540
     private var baseCutoutY = 48
@@ -82,24 +80,23 @@ class PunchHoleCompanionService : Service() {
                 Intent.ACTION_SCREEN_OFF -> {
                     isScreenOn = false
                     overlayView?.forceSleepNow()
+                    CuteVoiceEngine.shutdownNow()
                     stopAppearanceTimer()
                 }
-                Intent.ACTION_SCREEN_ON -> {
+                Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> {
                     isScreenOn = true
                     restartAppearanceTimer()
-                }
-                Intent.ACTION_USER_PRESENT -> {
-                    // Greet user when unlocking the phone if enough time has passed
-                    isScreenOn = true
+
                     val cfg = CompanionRepository.config.value
                     val now = SystemClock.elapsedRealtime()
-                    val cooldownMs = if (cfg.intervalMinutes > 0) cfg.intervalMinutes * 60_000L else 180_000L
-                    if (!isCameraInUse && !isPausedForBanking &&
+                    // Automatically come down and greet in Hindi when screen turns on (15s anti-spam cooldown)
+                    if (cfg.greetOnScreenOn && !isCameraInUse && !isPausedForBanking &&
                         overlayView?.state == CharacterState.HIDDEN &&
-                        (now - lastSpawnElapsedMs) >= cooldownMs
+                        (now - lastScreenGreetElapsedMs) >= 15_000L
                     ) {
+                        lastScreenGreetElapsedMs = now
                         lastSpawnElapsedMs = now
-                        overlayView?.spawnFromPunchHole("Welcome back! 👋")
+                        overlayView?.spawnFromPunchHole(isScreenOnGreeting = true)
                     }
                 }
             }
@@ -109,12 +106,15 @@ class PunchHoleCompanionService : Service() {
     private val powerReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (!isScreenOn || isCameraInUse || isPausedForBanking) return
+            val cfg = CompanionRepository.config.value
             when (intent?.action) {
                 Intent.ACTION_POWER_CONNECTED -> {
-                    overlayView?.triggerBatteryReaction(
-                        isChargingSurge = true,
-                        batteryPct = readCurrentBatteryPercentage()
-                    )
+                    if (cfg.chargingAnimationEnabled) {
+                        overlayView?.triggerBatteryReaction(
+                            isChargingSurge = true,
+                            batteryPct = readCurrentBatteryPercentage()
+                        )
+                    }
                 }
                 Intent.ACTION_BATTERY_LOW -> {
                     overlayView?.triggerBatteryReaction(
@@ -124,9 +124,7 @@ class PunchHoleCompanionService : Service() {
                 }
                 Intent.ACTION_POWER_DISCONNECTED -> {
                     if (overlayView?.state != CharacterState.HIDDEN) {
-                        overlayView?.triggerSingleTapTrick(
-                            CompanionRepository.config.value.allowEdgeWalk
-                        )
+                        overlayView?.triggerSingleTapTrick(cfg.allowEdgeWalk)
                     }
                 }
             }
@@ -144,7 +142,7 @@ class PunchHoleCompanionService : Service() {
 
             if (isPlayingMusic && !CompanionEventBus.isMusicCurrentlyPlaying) {
                 CompanionEventBus.isMusicCurrentlyPlaying = true
-                val randomBpm = (112..138).random().toFloat()
+                val randomBpm = (112..132).random().toFloat()
                 CompanionEventBus.activeTrackBpm = randomBpm
                 if (CompanionRepository.config.value.danceToMusic) {
                     overlayView?.triggerMusicDance(randomBpm)
@@ -228,9 +226,6 @@ class PunchHoleCompanionService : Service() {
         return START_STICKY
     }
 
-    /**
-     * Prevents the service from dying when the user swipes the app away from Recent Apps.
-     */
     override fun onTaskRemoved(rootIntent: Intent?) {
         val restartIntent = Intent(applicationContext, PunchHoleCompanionService::class.java)
         val pendingIntent = PendingIntent.getService(
@@ -315,6 +310,7 @@ class PunchHoleCompanionService : Service() {
         isPausedForBanking = true
         stealthResumeJob?.cancel()
         overlayView?.forceSleepNow()
+        CuteVoiceEngine.shutdownNow()
         detachWindowsFromScreen()
 
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
@@ -583,13 +579,26 @@ class PunchHoleCompanionService : Service() {
                         lastSpawnElapsedMs = SystemClock.elapsedRealtime()
                         overlayView?.toggleCharacterVisibility()
                     }
+                    "GREET_TEST" -> {
+                        if (isPausedForBanking) resumeOverlayFromBanking()
+                        lastSpawnElapsedMs = SystemClock.elapsedRealtime()
+                        overlayView?.spawnFromPunchHole(isScreenOnGreeting = true)
+                    }
+                    "CHARGE_TEST" -> {
+                        if (isPausedForBanking) resumeOverlayFromBanking()
+                        lastSpawnElapsedMs = SystemClock.elapsedRealtime()
+                        overlayView?.triggerBatteryReaction(
+                            isChargingSurge = true,
+                            batteryPct = readCurrentBatteryPercentage()
+                        )
+                    }
                     "TRICK" -> {
                         if (isPausedForBanking) resumeOverlayFromBanking()
                         val view = overlayView
                         if (view != null) {
                             if (view.state == CharacterState.HIDDEN) {
                                 lastSpawnElapsedMs = SystemClock.elapsedRealtime()
-                                view.spawnFromPunchHole()
+                                view.spawnFromPunchHole(isScreenOnGreeting = true)
                             } else {
                                 view.triggerSingleTapTrick(
                                     CompanionRepository.config.value.allowEdgeWalk
@@ -604,7 +613,7 @@ class PunchHoleCompanionService : Service() {
         }
     }
 
-        private fun restartAppearanceTimer() {
+    private fun restartAppearanceTimer() {
         stopAppearanceTimer()
         val minutes = CompanionRepository.config.value.intervalMinutes
         if (minutes <= 0 || !isScreenOn) return
@@ -622,12 +631,11 @@ class PunchHoleCompanionService : Service() {
                     (now - lastSpawnElapsedMs) >= intervalMs
                 ) {
                     lastSpawnElapsedMs = now
-                    overlayView?.spawnFromPunchHole()
+                    overlayView?.spawnFromPunchHole(isScreenOnGreeting = false)
                 }
             }
         }
     }
-
 
     private fun stopAppearanceTimer() {
         timerJob?.cancel()
@@ -641,6 +649,7 @@ class PunchHoleCompanionService : Service() {
         stopAppearanceTimer()
         stealthResumeJob?.cancel()
         serviceScope.cancel()
+        CuteVoiceEngine.shutdownNow()
         runCatching { unregisterReceiver(screenReceiver) }
         runCatching { unregisterReceiver(powerReceiver) }
         runCatching { audioManager.unregisterAudioPlaybackCallback(audioPlaybackCallback) }
