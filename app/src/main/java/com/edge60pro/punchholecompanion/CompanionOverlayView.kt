@@ -40,7 +40,6 @@ class CompanionOverlayView(
     private val density = resources.displayMetrics.density
     private val rope = VerletRopeEngine(18)
 
-    // Hardware Tilt Sensor (Active ONLY while character is visible = 0% idle battery drain)
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     private val gravitySensor: Sensor? =
         sensorManager.getDefaultSensor(Sensor.TYPE_GRAVITY)
@@ -64,7 +63,6 @@ class CompanionOverlayView(
     private var scaleY = 1f
     private var portalScale = 0f
 
-    // Secondary Follow-Through & Overlapping Action Channels
     private var followThroughX = 0f
     private var followThroughY = 0f
     private var lookOffsetX = 0f
@@ -86,13 +84,12 @@ class CompanionOverlayView(
     private var currentBatteryPct = 100
     private var activeBpm = 116f
 
-    // Cartoon Speech Bubble State
     private var speechText: String = ""
     private var speechTimer: Float = 0f
-    private var speechDuration: Float = 3.2f
+    private var speechDuration: Float = 3.8f
 
-    // Pre-allocated Studio Particle Pool (18 Particles, Zero GC allocation)
-    private val maxParticles = 18
+    // Pre-allocated Studio Particle Pool (22 Particles, Zero GC allocation)
+    private val maxParticles = 22
     private val partActive = BooleanArray(maxParticles)
     private val partX = FloatArray(maxParticles)
     private val partY = FloatArray(maxParticles)
@@ -102,9 +99,8 @@ class CompanionOverlayView(
     private val partLife = FloatArray(maxParticles)
     private val partMaxLife = FloatArray(maxParticles)
     private val partColor = IntArray(maxParticles)
-    private val partType = IntArray(maxParticles) // 0 = Star, 1 = Heart, 2 = Smoke Puff
+    private val partType = IntArray(maxParticles) // 0=Star, 1=Heart, 2=Smoke, 3=Rising Charge Orb
 
-    // Pre-allocated Paths & RectF
     private val ropePath = Path()
     private val scarfOrTailPath = Path()
     private val earPath = Path()
@@ -113,7 +109,6 @@ class CompanionOverlayView(
     private val bodyRect = RectF()
     private val bubbleRect = RectF()
 
-    // Studio Braided Rope Paints
     private val ropeShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
@@ -143,7 +138,6 @@ class CompanionOverlayView(
         color = Color.parseColor("#E76F51")
     }
 
-    // Studio Cel-Shaded Cartoon Character Paints
     private val cartoonOutlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 2.6f * density
@@ -190,6 +184,11 @@ class CompanionOverlayView(
         style = Paint.Style.FILL
     }
 
+    private val chargeAuraPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.parseColor("#00E676")
+    }
+
     private val bubbleFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
         color = Color.parseColor("#FFFDF9")
@@ -229,7 +228,7 @@ class CompanionOverlayView(
     }
 
     private val batteryTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = 11f * density
+        textSize = 11.5f * density
         typeface = Typeface.DEFAULT_BOLD
         textAlign = Paint.Align.CENTER
         color = Color.parseColor("#00E676")
@@ -295,14 +294,15 @@ class CompanionOverlayView(
         syncSkinPaints(currentSkin)
     }
 
-    private fun showSpeechBubble(customMessage: String? = null) {
+    private fun showSpeechBubble(customMessage: String? = null, durationSec: Float = 3.6f) {
+        val name = CompanionRepository.config.value.userName.trim().ifEmpty { "Dost" }
         speechText = customMessage ?: when (currentSkin) {
-            CharacterSkin.MOCHI_CAT -> listOf("Meow~ ✨", "Purrfect! 🐾", "Cozy day 💕", "Nyaa~ 🧶").random()
-            CharacterSkin.SHADOW_NINJA -> listOf("Nin-Nin! 🥷", "Silent breeze 🍃", "Shadow Art ✨", "At your service!").random()
-            CharacterSkin.ASTRO_BOT -> listOf("Zero-G! 🚀", "Hello Friend ✨", "Beep-Boop! 🤖", "All systems calm").random()
-            CharacterSkin.KITSUNE_SPIRIT -> listOf("Kon-Kon! 🦊", "Fox Blessing ✨", "Lucky chime 🔔", "Peaceful vibes").random()
+            CharacterSkin.MOCHI_CAT -> listOf("Meow~ $name! ✨", "Purrfect! 🐾", "Kya haal hai $name? 💕", "Nyaa~ 🧶").random()
+            CharacterSkin.SHADOW_NINJA -> listOf("Nin-Nin $name! 🥷", "Hukum Boss! 🍃", "Shadow Art ✨", "SabTheek $name?").random()
+            CharacterSkin.ASTRO_BOT -> listOf("Zero-G $name! 🚀", "Hi $name! ✨", "Beep-Boop! 🤖", "Full Vibe!").random()
+            CharacterSkin.KITSUNE_SPIRIT -> listOf("Kon-Kon $name! 🦊", "Shubh Din ✨", "Lucky Bell 🔔", "Namaste $name!").random()
         }
-        speechDuration = 3.2f
+        speechDuration = durationSec
         speechTimer = speechDuration
     }
 
@@ -317,15 +317,24 @@ class CompanionOverlayView(
         for (i in 0 until maxParticles) {
             if (!partActive[i]) {
                 partActive[i] = true
-                partX[i] = originX + (Random.nextFloat() - 0.5f) * 20f * density
-                partY[i] = originY + (Random.nextFloat() - 0.5f) * 20f * density
-                val angle = Random.nextFloat() * PI.toFloat() * 2f
-                // Dreamy, slow-floating studio particle speeds
-                val speed = (18f + Random.nextFloat() * 48f) * density
-                partVx[i] = cos(angle) * speed
-                partVy[i] = sin(angle) * speed - 22f * density
-                partSize[i] = (if (type == 2) 12f else 6.5f) * density * (0.75f + Random.nextFloat() * 0.5f)
-                partMaxLife[i] = 1.15f + Random.nextFloat() * 0.65f
+                if (type == 3) {
+                    // Rising Bioluminescent Charging Orbs floating up toward the character & cutout
+                    partX[i] = originX + (Random.nextFloat() - 0.5f) * 52f * density
+                    partY[i] = originY + (15f + Random.nextFloat() * 30f) * density
+                    partVx[i] = (Random.nextFloat() - 0.5f) * 14f * density
+                    partVy[i] = -(42f + Random.nextFloat() * 45f) * density
+                    partSize[i] = (4.5f + Random.nextFloat() * 5.0f) * density
+                    partMaxLife[i] = 1.4f + Random.nextFloat() * 0.7f
+                } else {
+                    partX[i] = originX + (Random.nextFloat() - 0.5f) * 20f * density
+                    partY[i] = originY + (Random.nextFloat() - 0.5f) * 20f * density
+                    val angle = Random.nextFloat() * PI.toFloat() * 2f
+                    val speed = (18f + Random.nextFloat() * 48f) * density
+                    partVx[i] = cos(angle) * speed
+                    partVy[i] = sin(angle) * speed - 22f * density
+                    partSize[i] = (if (type == 2) 12f else 6.5f) * density * (0.75f + Random.nextFloat() * 0.5f)
+                    partMaxLife[i] = 1.15f + Random.nextFloat() * 0.65f
+                }
                 partLife[i] = partMaxLife[i]
                 partColor[i] = color
                 partType[i] = type
@@ -337,23 +346,32 @@ class CompanionOverlayView(
 
     fun toggleCharacterVisibility() {
         if (state == CharacterState.HIDDEN) {
-            spawnFromPunchHole()
+            spawnFromPunchHole(isScreenOnGreeting = true)
         } else if (state != CharacterState.CLIMBING_UP) {
             retreatToPunchHole()
         }
     }
 
-    fun spawnFromPunchHole(greetingText: String? = null) {
-        if (state != CharacterState.HIDDEN) return
-        advanceCharacterIfAutoSwap()
-        rope.resetToAnchor(rope.anchorX, rope.anchorY)
-        rope.deployedRatio = 0.02f
-        state = CharacterState.DESCENDING
-        stateTimer = 0f
-        idleDurationTarget = Random.nextFloat() * 8f + 16f // Calm 16-24s hangout
-        rope.applyTipImpulse((Random.nextFloat() - 0.5f) * 18f * density, 10f * density)
-        emitParticleBurst(rope.anchorX, rope.anchorY + 12f * density, 6, 0, Color.parseColor("#00F5D4"))
-        showSpeechBubble(greetingText)
+    fun spawnFromPunchHole(isScreenOnGreeting: Boolean = false) {
+        if (state == CharacterState.HIDDEN) {
+            advanceCharacterIfAutoSwap()
+            rope.resetToAnchor(rope.anchorX, rope.anchorY)
+            rope.deployedRatio = 0.02f
+            state = CharacterState.DESCENDING
+            stateTimer = 0f
+            idleDurationTarget = Random.nextFloat() * 8f + 16f
+            rope.applyTipImpulse((Random.nextFloat() - 0.5f) * 18f * density, 10f * density)
+            emitParticleBurst(rope.anchorX, rope.anchorY + 12f * density, 6, 0, Color.parseColor("#00F5D4"))
+        }
+
+        val cfg = CompanionRepository.config.value
+        if (isScreenOnGreeting) {
+            val dialogue = CuteVoiceEngine.buildScreenOnGreeting(currentSkin, cfg.userName)
+            showSpeechBubble(dialogue.bubbleText, durationSec = 4.5f)
+            CuteVoiceEngine.speak(context, dialogue.spokenHindiText, currentSkin)
+        } else {
+            showSpeechBubble()
+        }
         startAnimationLoop()
     }
 
@@ -385,40 +403,46 @@ class CompanionOverlayView(
             pool.random()
         }
 
-        showSpeechBubble()
+        val name = CompanionRepository.config.value.userName.trim().ifEmpty { "Dost" }
         emitParticleBurst(charX, charY, 5, 0, currentSkin.accentColor)
 
         when (nextTrick) {
             CharacterState.TRICK_BACKFLIP -> {
                 state = CharacterState.TRICK_BACKFLIP
+                showSpeechBubble("Dekho $name! Backflip! ✨")
+                CuteVoiceEngine.speak(context, "देखो $name, मेरा सुपर फ्लिप!", currentSkin)
             }
             CharacterState.TRICK_BUNGEE_JUMP -> {
                 state = CharacterState.TRICK_BUNGEE_JUMP
+                showSpeechBubble("Bungee Jump~ 🐾")
             }
             CharacterState.TRICK_SWING_WAVE -> {
                 state = CharacterState.TRICK_SWING_WAVE
                 rope.applyTipImpulse((if (Random.nextBoolean()) 1 else -1) * 42f * density, 0f)
+                showSpeechBubble("Jhoola~ ✨")
             }
             CharacterState.TRICK_TARZAN_SWING -> {
                 state = CharacterState.TRICK_TARZAN_SWING
                 val dir = if (Random.nextBoolean()) 1 else -1
                 rope.applyTipImpulse(dir * 75f * density, -15f * density)
-                showSpeechBubble("Wheee~ 🌟")
+                showSpeechBubble("Wheee~ $name! 🌟")
+                CuteVoiceEngine.speak(context, "व्ही! झूला झूलने में मज़ा आ रहा है!", currentSkin)
             }
             CharacterState.TRICK_UPSIDE_DOWN -> {
                 state = CharacterState.TRICK_UPSIDE_DOWN
                 rope.applyTipImpulse((if (Random.nextBoolean()) 1 else -1) * 22f * density, 12f * density)
-                showSpeechBubble("Upside down~ 🙃")
+                showSpeechBubble("Ulta Pultha~ 🙃")
             }
             CharacterState.TRICK_SMOKE_TELEPORT -> {
                 state = CharacterState.TRICK_SMOKE_TELEPORT
-                showSpeechBubble("Ninja vanish! 💨")
+                showSpeechBubble("Gayab! Bye $name! 💨")
+                CuteVoiceEngine.speak(context, "बाय बाय $name! फिर मिलेंगे!", currentSkin)
             }
             CharacterState.EDGE_WALKING -> {
                 state = CharacterState.EDGE_WALKING
                 edgeProgress = rope.anchorX
                 edgeDirection = if (Random.nextBoolean()) 1f else -1f
-                showSpeechBubble("Strolling~ 🐾")
+                showSpeechBubble("Chalo ghoom ke aate hain! 🐾")
             }
             else -> {
                 state = CharacterState.IDLE_HANGING
@@ -456,6 +480,7 @@ class CompanionOverlayView(
         if (stretch >= 1.65f && velocityY <= 400f) {
             state = CharacterState.SLINGSHOT_LAUNCH
             showSpeechBubble("Woooosh!! 🚀")
+            CuteVoiceEngine.speak(context, "वूश! मैं चला!", currentSkin)
         } else {
             state = CharacterState.TRICK_BACKFLIP
             showSpeechBubble("Boing~ ✨")
@@ -463,6 +488,9 @@ class CompanionOverlayView(
     }
 
     fun triggerBatteryReaction(isChargingSurge: Boolean, batteryPct: Int) {
+        val cfg = CompanionRepository.config.value
+        if (isChargingSurge && !cfg.chargingAnimationEnabled) return
+
         currentBatteryPct = batteryPct
         if (state == CharacterState.HIDDEN) {
             advanceCharacterIfAutoSwap()
@@ -477,13 +505,22 @@ class CompanionOverlayView(
 
         if (isChargingSurge) {
             state = CharacterState.REACT_CHARGING_SURGE
-            rope.applyTipImpulse((if (Random.nextBoolean()) 1 else -1) * 35f * density, -25f * density)
-            emitParticleBurst(charX, charY, 8, 0, Color.parseColor("#00E676"))
-            showSpeechBubble("Charging~ ⚡$batteryPct%")
+            rope.applyTipImpulse((if (Random.nextBoolean()) 1 else -1) * 28f * density, -18f * density)
+            emitParticleBurst(charX, charY, 8, 3, Color.parseColor("#00E676"))
+
+            val chargeDialogue = CuteVoiceEngine.buildChargingGreeting(cfg.userName, batteryPct)
+            showSpeechBubble(chargeDialogue.bubbleText, durationSec = 5.2f)
+            CuteVoiceEngine.speak(context, chargeDialogue.spokenHindiText, currentSkin)
         } else {
             state = CharacterState.REACT_LOW_BATTERY
             rope.applyTipImpulse(0f, 20f * density)
-            showSpeechBubble("Sleepy... 🪫$batteryPct%")
+            val name = cfg.userName.trim().ifEmpty { "Dost" }
+            showSpeechBubble("Bhookh lagi hai $name... 🪫$batteryPct%", durationSec = 4.5f)
+            CuteVoiceEngine.speak(
+                context,
+                "अरे $name, बैटरी कम हो गई है, प्लीज़ मुझे चार्ज लगा दो ना!",
+                currentSkin
+            )
         }
         startAnimationLoop()
     }
@@ -498,7 +535,7 @@ class CompanionOverlayView(
         state = CharacterState.DANCE_MUSIC_GROOVE
         stateTimer = 0f
         portalScale = 1f
-        showSpeechBubble("Grooving~ 🎵")
+        showSpeechBubble("Wah kya gaana hai! 🎵")
         startAnimationLoop()
     }
 
@@ -530,7 +567,6 @@ class CompanionOverlayView(
 
     override fun onSensorChanged(event: SensorEvent?) {
         if (event == null) return
-        // Extra-smooth low-pass filter on phone tilt so gravity feels fluid and weighted
         val rawTilt = -event.values[0]
         phoneTiltX = phoneTiltX * 0.92f + rawTilt * 0.08f
     }
@@ -559,7 +595,6 @@ class CompanionOverlayView(
             speechTimer = (speechTimer - dt).coerceAtLeast(0f)
         }
 
-        // Natural eye blinking + gentle curious gaze shifting left/right
         blinkTimer += dt
         if (blinkTimer > 4.2f) {
             isBlinking = true
@@ -576,7 +611,6 @@ class CompanionOverlayView(
         }
         lookOffsetX += (targetLookOffsetX - lookOffsetX) * (dt * 4.5f).coerceIn(0f, 1f)
 
-        // Apply gentle phone tilt gravity to the rope
         if (!rope.isTipPinned && abs(phoneTiltX) > 0.35f) {
             rope.applyTipImpulse(phoneTiltX * 0.65f * density * dt * 60f, 0f)
         }
@@ -584,7 +618,6 @@ class CompanionOverlayView(
         rope.step(dt)
         updateParticles(dt)
 
-        // Compute lagging secondary follow-through from real rope velocity (for tails, scarves, ears)
         val targetFollowX = (-rope.tipVelocityX() * 0.045f).coerceIn(-22f * density, 22f * density)
         val targetFollowY = (-rope.tipVelocityY() * 0.035f).coerceIn(-16f * density, 16f * density)
         followThroughX += (targetFollowX - followThroughX) * (dt * 7.5f).coerceIn(0f, 1f)
@@ -594,9 +627,6 @@ class CompanionOverlayView(
 
         when (state) {
             CharacterState.DESCENDING -> {
-                // Studio 2-Stage Rappel (2.6s):
-                // 0.0 - 0.22: Peek head out of punch hole curiously
-                // 0.22 - 1.0: Smooth slow-in-slow-out glide down the cord
                 val duration = 2.6f
                 val p = (stateTimer / duration).coerceIn(0f, 1f)
 
@@ -618,7 +648,6 @@ class CompanionOverlayView(
                     charY = rope.tipY()
                     charRotationDeg = naturalRopeTilt
 
-                    // Gentle aerodynamic stretch mid-glide, soft cushion at bottom
                     val midGlide = sin(glideP * PI.toFloat())
                     scaleX = 1f - 0.06f * midGlide
                     scaleY = 1f + 0.06f * midGlide
@@ -635,14 +664,12 @@ class CompanionOverlayView(
                 rope.deployedRatio = 1f
                 portalScale = 1f
 
-                // Calm, slow pendulum breeze (period ~5.2 seconds)
                 rope.applyTipImpulse(sin(stateTimer * 1.2f) * 0.55f * density * dt * 60f, 0f)
 
                 charX = rope.tipX()
                 charY = rope.tipY()
                 charRotationDeg = naturalRopeTilt + sin(stateTimer * 1.2f) * 3f
 
-                // Slow, peaceful breathing cycle
                 val breath = sin(stateTimer * 2.2f) * 0.03f
                 scaleX = 1f - breath
                 scaleY = 1f + breath
@@ -691,10 +718,6 @@ class CompanionOverlayView(
             }
 
             CharacterState.TRICK_BACKFLIP -> {
-                // Studio 3-Phase Backflip (2.2s):
-                // Phase 1 (0.00 - 0.24): Anticipation crouch down & pull rope taut
-                // Phase 2 (0.24 - 0.82): Graceful high arc flip with slow-mo apex
-                // Phase 3 (0.82 - 1.00): Soft landing cushion squash & recovery
                 ropePaint.strokeWidth = ropeThicknessPx
                 val duration = 2.2f
                 val p = (stateTimer / duration).coerceIn(0f, 1f)
@@ -713,7 +736,6 @@ class CompanionOverlayView(
                     val jumpArc = sin(airP * PI.toFloat()) * 46f * density
                     charX = rope.tipX()
                     charY = rope.tipY() - jumpArc
-                    // Smooth cubic rotation so the flip slows down gracefully at the peak
                     charRotationDeg = easeInOutCubic(airP) * 360f
                     val stretch = sin(airP * PI.toFloat()) * 0.08f
                     scaleX = 1f - stretch
@@ -739,7 +761,6 @@ class CompanionOverlayView(
             }
 
             CharacterState.TRICK_BUNGEE_JUMP -> {
-                // Studio Weighted Bungee (2.9s): Anticipation lift -> Deep slow elastic dip -> Gentle settle
                 val duration = 2.9f
                 val p = (stateTimer / duration).coerceIn(0f, 1f)
 
@@ -752,7 +773,6 @@ class CompanionOverlayView(
                     scaleY = 1f - 0.08f * prep
                 } else {
                     val diveP = ((p - 0.18f) / 0.82f).coerceIn(0f, 1f)
-                    // 1.5 slow, heavy damped oscillations
                     val elasticWave = sin(diveP * PI.toFloat() * 2.5f) * (1f - diveP).pow(1.4f)
                     rope.deployedRatio = 1f + 0.42f * elasticWave
                     charX = rope.tipX()
@@ -810,7 +830,6 @@ class CompanionOverlayView(
                 charX = rope.tipX()
                 charY = rope.tipY()
 
-                // Smooth 0.9s transition into 180° upside-down hang, and smooth flip back at the end
                 val flipIn = easeInOutCubic((stateTimer / 0.9f).coerceIn(0f, 1f))
                 val flipOut = easeInOutCubic(((duration - stateTimer) / 0.9f).coerceIn(0f, 1f))
                 val flipRatio = min(flipIn, flipOut)
@@ -826,7 +845,6 @@ class CompanionOverlayView(
             }
 
             CharacterState.TRICK_SMOKE_TELEPORT -> {
-                // Anticipation hand-sign pause (0.45s) -> Smoke poof vanish (0.65s)
                 val duration = 1.1f
                 val p = (stateTimer / duration).coerceIn(0f, 1f)
                 if (p < 0.4f) {
@@ -852,7 +870,6 @@ class CompanionOverlayView(
             }
 
             CharacterState.EDGE_WALKING -> {
-                // Unhurried, jaunty studio stroll along the bezel (8.4s total)
                 rope.deployedRatio = (rope.deployedRatio - dt * 1.4f).coerceAtLeast(0.02f)
                 val speed = 115f * density
                 val w = width.toFloat().coerceAtLeast(1080f)
@@ -865,7 +882,7 @@ class CompanionOverlayView(
                 if (stateTimer < 2.6f) {
                     charX = edgeProgress.coerceIn(margin, w - margin)
                     charY = rope.anchorY + 14f * density
-                    charRotationDeg = edgeDirection * 6f // Slight forward lean while walking
+                    charRotationDeg = edgeDirection * 6f
                     if (charX <= margin + 2f || charX >= w - margin - 2f) {
                         stateTimer = 2.6f
                     }
@@ -884,7 +901,6 @@ class CompanionOverlayView(
                     charRotationDeg = -edgeDirection * 6f
                 }
 
-                // Soft, bouncy studio trot cadence
                 val stepBounce = abs(sin(stateTimer * 7.5f))
                 scaleX = 1f + 0.05f * (0.5f - stepBounce)
                 scaleY = 1f - 0.05f * (0.5f - stepBounce)
@@ -896,18 +912,30 @@ class CompanionOverlayView(
             }
 
             CharacterState.REACT_CHARGING_SURGE -> {
-                val duration = 5.0f
+                // Studio Natural Zero-Gravity Charging Animation (6.4s)
+                val duration = 6.4f
                 val p = (stateTimer / duration).coerceIn(0f, 1f)
-                rope.deployedRatio = 1f
+                rope.deployedRatio = 0.95f - 0.08f * sin(p * PI.toFloat())
 
-                // Smooth levitation aura instead of frantic shaking
+                // Gentle, peaceful figure-8 zero-gravity float
+                rope.applyTipImpulse(sin(stateTimer * 1.8f) * 0.85f * density * dt * 60f, 0f)
                 charX = rope.tipX()
-                charY = rope.tipY() - sin(p * PI.toFloat()) * 16f * density
-                charRotationDeg = naturalRopeTilt + sin(stateTimer * 4f) * 5f
+                charY = rope.tipY() - sin(p * PI.toFloat()) * 14f * density
+                charRotationDeg = naturalRopeTilt + sin(stateTimer * 2.2f) * 6f
 
-                val pulse = sin(stateTimer * 6f) * 0.05f
-                scaleX = 1f + pulse
-                scaleY = 1f - pulse
+                val breath = sin(stateTimer * 3.5f) * 0.045f
+                scaleX = 1f + breath
+                scaleY = 1f - breath
+
+                // Spawn rising bioluminescent energy orbs that float up into the character
+                if (Random.nextFloat() < 0.28f) {
+                    val orbColor = if (Random.nextBoolean()) {
+                        Color.parseColor("#00E676")
+                    } else {
+                        Color.parseColor("#FFEA00")
+                    }
+                    emitParticleBurst(charX, charY + 24f * density, 1, 3, orbColor)
+                }
 
                 if (p >= 1f) {
                     retreatToPunchHole()
@@ -956,7 +984,6 @@ class CompanionOverlayView(
                 val p = (stateTimer / duration).coerceIn(0f, 1f)
                 rope.deployedRatio = 0.92f
 
-                // Smooth half-tempo groove so the character bops naturally to the beat
                 val beatFreq = (activeBpm / 60f) * PI.toFloat()
                 val beatWave = sin(stateTimer * beatFreq)
                 val swayWave = cos(stateTimer * beatFreq * 0.5f)
@@ -979,13 +1006,10 @@ class CompanionOverlayView(
             }
 
             CharacterState.CLIMBING_UP -> {
-                // Studio Hand-Over-Hand Climb (2.1s):
-                // Character pulls itself up in 3 rhythmic climbing steps before slipping into the cutout
                 ropePaint.strokeWidth = ropeThicknessPx
                 val duration = 2.1f
                 val p = (stateTimer / duration).coerceIn(0f, 1f)
 
-                // Stepped hand-over-hand progress curve
                 val climbPull = p + 0.045f * sin(p * PI.toFloat() * 6f)
                 val easedClimb = easeInOutCubic(climbPull.coerceIn(0f, 1f))
 
@@ -994,7 +1018,6 @@ class CompanionOverlayView(
 
                 charX = rope.tipX()
                 charY = rope.tipY()
-                // Gentle side-to-side shoulder tilt with each hand pull
                 charRotationDeg = sin(p * PI.toFloat() * 6f) * 9f * portalScale
 
                 val pullStretch = sin(p * PI.toFloat() * 6f) * 0.05f
@@ -1009,7 +1032,6 @@ class CompanionOverlayView(
             CharacterState.HIDDEN -> Unit
         }
 
-        // Smoothly interpolate angular rotation so the character never snaps between states
         val rotDiff = charRotationDeg - smoothRotationDeg
         smoothRotationDeg += rotDiff * (dt * 14f).coerceIn(0f, 1f)
 
@@ -1028,8 +1050,14 @@ class CompanionOverlayView(
                 } else {
                     partX[i] += partVx[i] * dt
                     partY[i] += partVy[i] * dt
-                    partVx[i] *= 0.97f
-                    partVy[i] += 42f * density * dt // Feather-light studio float
+                    if (partType[i] == 3) {
+                        // Gentle inward attraction toward the character/rope while rising
+                        val pullX = (charX - partX[i]) * 1.8f * dt
+                        partX[i] += pullX
+                    } else {
+                        partVx[i] *= 0.97f
+                        partVy[i] += 42f * density * dt
+                    }
                 }
             }
         }
@@ -1045,12 +1073,21 @@ class CompanionOverlayView(
             canvas.drawCircle(rope.anchorX, rope.anchorY, 19f * density, cutoutRingPaint)
         }
 
-        // 2. Slingshot Aim Vector
+        // 2. Soft Bioluminescent Charging Aura Behind Character
+        if (state == CharacterState.REACT_CHARGING_SURGE) {
+            val auraPulse = 1f + sin(stateTimer * 3.8f) * 0.14f
+            chargeAuraPaint.alpha = 42
+            canvas.drawCircle(charX, charY + 12f * density, 38f * density * auraPulse, chargeAuraPaint)
+            chargeAuraPaint.alpha = 75
+            canvas.drawCircle(charX, charY + 12f * density, 26f * density * auraPulse, chargeAuraPaint)
+        }
+
+        // 3. Slingshot Aim Vector
         if (state == CharacterState.DRAGGING_SLINGSHOT && currentStretchRatio > 1.15f) {
             canvas.drawLine(charX, charY, rope.anchorX, rope.anchorY, tensionIndicatorPaint)
         }
 
-        // 3. Studio Cel-Shaded Braided Rope + Knot Ring
+        // 4. Studio Cel-Shaded Braided Rope + Knot Ring
         if (rope.deployedRatio > 0.04f) {
             ropePath.reset()
             ropePath.moveTo(rope.x[0], rope.y[0])
@@ -1073,7 +1110,7 @@ class CompanionOverlayView(
             canvas.drawCircle(tipX, tipY, ropeThicknessPx * 1.15f, cartoonOutlinePaint)
         }
 
-        // 4. Character Rig
+        // 5. Character Rig
         val rig = lottieRig
         if (rig != null && rig.isLoaded) {
             rig.drawAtRopeTip(
@@ -1088,15 +1125,15 @@ class CompanionOverlayView(
             drawStudioCartoonCharacter(canvas)
         }
 
-        // 5. Studio Particles
+        // 6. Studio Particles
         drawParticles(canvas)
 
-        // 6. Cartoon Speech Bubble Callout
+        // 7. Cartoon Speech Bubble Callout
         if (speechTimer > 0f && portalScale > 0.4f) {
             drawCartoonSpeechBubble(canvas)
         }
 
-        // 7. Battery / Music VFX Overlays
+        // 8. Battery / Music VFX Overlays
         drawStateVfxOverlays(canvas)
     }
 
@@ -1126,6 +1163,14 @@ class CompanionOverlayView(
                 1 -> {
                     canvas.drawCircle(px, py, sz * 0.75f, particlePaint)
                 }
+                3 -> {
+                    // Glowing Bioluminescent Charging Firefly Orb (Outer Halo + White Core)
+                    particlePaint.alpha = (smoothAlpha * 110).toInt().coerceIn(0, 255)
+                    canvas.drawCircle(px, py, sz * 1.45f, particlePaint)
+                    particlePaint.alpha = (smoothAlpha * 245).toInt().coerceIn(0, 255)
+                    canvas.drawCircle(px, py, sz * 0.75f, particlePaint)
+                    canvas.drawCircle(px, py, sz * 0.35f, highlightPaint)
+                }
                 else -> {
                     val smokeRadius = partSize[i] * (1.5f - progress * 0.5f)
                     canvas.drawCircle(px, py, smokeRadius, particlePaint)
@@ -1143,12 +1188,17 @@ class CompanionOverlayView(
         val textWidth = bubbleTextPaint.measureText(speechText)
         val padH = 12f * density
         val boxW = textWidth + padH * 2f
-        val boxH = 25f * density
+        val boxH = 26f * density
 
-        val placeLeft = charX > (width * 0.62f)
-        val offsetX = if (placeLeft) -(boxW * 0.65f + 22f * density) else (boxW * 0.65f + 22f * density)
-        val bx = charX + offsetX
-        val by = (charY - 22f * density + sin(stateTimer * 2.5f) * 2.5f * density).coerceAtLeast(36f * density)
+        val screenW = width.toFloat().coerceAtLeast(1080f)
+        val placeLeft = charX > (screenW * 0.58f)
+        val rawBx = if (placeLeft) {
+            charX - (boxW * 0.55f + 22f * density)
+        } else {
+            charX + (boxW * 0.55f + 22f * density)
+        }
+        val bx = rawBx.coerceIn(boxW / 2f + 12f * density, screenW - boxW / 2f - 12f * density)
+        val by = (charY - 24f * density + sin(stateTimer * 2.5f) * 2.5f * density).coerceAtLeast(38f * density)
 
         canvas.save()
         canvas.translate(bx, by)
@@ -1181,7 +1231,6 @@ class CompanionOverlayView(
     }
 
     private fun drawMochiCat(canvas: Canvas, r: Float) {
-        // 1. Inertia-Driven S-Curve Cat Tail (Trails smoothly behind swing direction)
         val gentleWag = sin(stateTimer * 2.6f) * 9f * density + followThroughX * 0.85f
         val verticalLag = followThroughY * 0.6f
         scarfOrTailPath.reset()
@@ -1198,7 +1247,6 @@ class CompanionOverlayView(
         tailStrokePaint.color = currentSkin.accentColor
         canvas.drawPath(scarfOrTailPath, tailStrokePaint)
 
-        // 2. Plump Chibi Cat Body + Cream Belly Patch
         bodyRect.set(-r * 0.72f, r * 0.4f, r * 0.72f, r * 1.55f)
         canvas.drawRoundRect(bodyRect, r * 0.55f, r * 0.55f, bodyPaint)
         canvas.drawRoundRect(bodyRect, r * 0.55f, r * 0.55f, cartoonOutlinePaint)
@@ -1206,18 +1254,15 @@ class CompanionOverlayView(
         bodyRect.set(-r * 0.42f, r * 0.62f, r * 0.42f, r * 1.38f)
         canvas.drawOval(bodyRect, secondaryPaint)
 
-        // Soft Chin Depth Shadow on Upper Chest
         bodyRect.set(-r * 0.55f, r * 0.52f, r * 0.55f, r * 0.82f)
         canvas.drawOval(bodyRect, chinShadowPaint)
 
-        // 3. Cute Dangling Hind Paws (Lag softly with vertical inertia)
         val pawSwing = sin(stateTimer * 2.8f) * 2.2f * density + followThroughY * 0.25f
         canvas.drawCircle(-r * 0.38f + followThroughX * 0.15f, r * 1.58f + pawSwing, r * 0.22f, bodyPaint)
         canvas.drawCircle(-r * 0.38f + followThroughX * 0.15f, r * 1.58f + pawSwing, r * 0.22f, cartoonOutlinePaint)
         canvas.drawCircle(r * 0.38f + followThroughX * 0.15f, r * 1.58f - pawSwing, r * 0.22f, bodyPaint)
         canvas.drawCircle(r * 0.38f + followThroughX * 0.15f, r * 1.58f - pawSwing, r * 0.22f, cartoonOutlinePaint)
 
-        // 4. Pointed Cat Ears with Gentle Ear-Tip Follow-Through
         val earTwitch = followThroughX * 0.18f
         for (side in listOf(-1f, 1f)) {
             earPath.reset()
@@ -1236,26 +1281,22 @@ class CompanionOverlayView(
             canvas.drawPath(earPath, secondaryPaint)
         }
 
-        // 5. Rounded Cat Head + Calico Ginger Forehead Spot + 3D Rim Highlight
         bodyRect.set(-r, -r * 0.48f, r, r * 0.78f)
         canvas.drawRoundRect(bodyRect, r * 0.75f, r * 0.75f, bodyPaint)
 
         bodyRect.set(r * 0.1f, -r * 0.45f, r * 0.85f, r * 0.05f)
         canvas.drawArc(bodyRect, 200f, 140f, true, accentPaint)
 
-        // Studio 2.5D Top-Left Specular Rim Light
         bodyRect.set(-r * 0.86f, -r * 0.38f, r * 0.2f, r * 0.35f)
         canvas.drawArc(bodyRect, 195f, 75f, false, rimLightPaint)
 
         bodyRect.set(-r, -r * 0.48f, r, r * 0.78f)
         canvas.drawRoundRect(bodyRect, r * 0.75f, r * 0.75f, cartoonOutlinePaint)
 
-        // 6. Red Collar + Golden Bell
         bodyRect.set(-r * 0.62f, r * 0.58f, r * 0.62f, r * 0.76f)
         canvas.drawRoundRect(bodyRect, 4f * density, 4f * density, accentPaint)
         canvas.drawRoundRect(bodyRect, 4f * density, 4f * density, cartoonOutlinePaint)
 
-        // 7. Studio Anime Eyes + Whiskers
         drawStudioEyes(canvas, r, yCenter = r * 0.12f, isCatMouth = true)
 
         val whiskerWidth = cartoonOutlinePaint.strokeWidth
@@ -1266,7 +1307,6 @@ class CompanionOverlayView(
         }
         cartoonOutlinePaint.strokeWidth = whiskerWidth
 
-        // 8. Front Paws Reaching Up to Grip the Rope Knot
         val climbHandOffset = if (state == CharacterState.CLIMBING_UP) sin(stateTimer * 9f) * 3.5f * density else 0f
         canvas.drawCircle(-r * 0.20f, -r * 0.15f + climbHandOffset, r * 0.22f, bodyPaint)
         canvas.drawCircle(-r * 0.20f, -r * 0.15f + climbHandOffset, r * 0.22f, cartoonOutlinePaint)
@@ -1278,7 +1318,6 @@ class CompanionOverlayView(
     }
 
     private fun drawShadowNinja(canvas: Canvas, r: Float) {
-        // 1. Inertia-Driven Silk Ninja Scarf (Billows smoothly with swing velocity)
         val wave1 = sin(stateTimer * 3.2f) * 9f * density + followThroughX * 0.9f
         val wave2 = cos(stateTimer * 3.2f) * 12f * density + followThroughY * 0.8f
         scarfOrTailPath.reset()
@@ -1293,7 +1332,6 @@ class CompanionOverlayView(
         canvas.drawPath(scarfOrTailPath, accentPaint)
         canvas.drawPath(scarfOrTailPath, cartoonOutlinePaint)
 
-        // 2. Diagonal Katana Hilt Strapped Behind Back
         canvas.save()
         canvas.rotate(32f)
         bodyRect.set(-r * 0.15f, -r * 0.95f, r * 0.15f, r * 0.6f)
@@ -1301,12 +1339,10 @@ class CompanionOverlayView(
         canvas.drawRoundRect(bodyRect, 3f * density, 3f * density, cartoonOutlinePaint)
         canvas.restore()
 
-        // 3. Chibi Ninja Torso
         bodyRect.set(-r * 0.65f, r * 0.45f, r * 0.65f, r * 1.48f)
         canvas.drawRoundRect(bodyRect, r * 0.45f, r * 0.45f, bodyPaint)
         canvas.drawRoundRect(bodyRect, r * 0.45f, r * 0.45f, cartoonOutlinePaint)
 
-        // 4. Rounded Ninja Hood Head + 2.5D Rim Highlight
         bodyRect.set(-r * 0.95f, -r * 0.42f, r * 0.95f, r * 0.78f)
         canvas.drawRoundRect(bodyRect, r * 0.72f, r * 0.72f, bodyPaint)
 
@@ -1316,12 +1352,10 @@ class CompanionOverlayView(
         bodyRect.set(-r * 0.95f, -r * 0.42f, r * 0.95f, r * 0.78f)
         canvas.drawRoundRect(bodyRect, r * 0.72f, r * 0.72f, cartoonOutlinePaint)
 
-        // 5. Warm Skin-Tone Face Slit Opening
         bodyRect.set(-r * 0.72f, -r * 0.04f, r * 0.72f, r * 0.36f)
         canvas.drawRoundRect(bodyRect, r * 0.22f, r * 0.22f, secondaryPaint)
         canvas.drawRoundRect(bodyRect, r * 0.22f, r * 0.22f, cartoonOutlinePaint)
 
-        // 6. Crimson Headband + Metallic Forehead Plate
         bodyRect.set(-r * 0.96f, -r * 0.26f, r * 0.96f, -r * 0.02f)
         canvas.drawRoundRect(bodyRect, 4f * density, 4f * density, accentPaint)
         canvas.drawRoundRect(bodyRect, 4f * density, 4f * density, cartoonOutlinePaint)
@@ -1329,10 +1363,8 @@ class CompanionOverlayView(
         bodyRect.set(-r * 0.35f, -r * 0.22f, r * 0.35f, -r * 0.06f)
         canvas.drawRoundRect(bodyRect, 2f * density, 2f * density, highlightPaint)
 
-        // 7. Expressive Glowing Ninja Eyes
         drawStudioEyes(canvas, r, yCenter = r * 0.16f, isCatMouth = false)
 
-        // 8. Ninja Hands Gripping the Rope Knot
         val climbHandOffset = if (state == CharacterState.CLIMBING_UP) sin(stateTimer * 9f) * 3.5f * density else 0f
         canvas.drawCircle(-r * 0.18f, -r * 0.14f + climbHandOffset, r * 0.19f, bodyPaint)
         canvas.drawCircle(-r * 0.18f, -r * 0.14f + climbHandOffset, r * 0.19f, cartoonOutlinePaint)
@@ -1341,7 +1373,6 @@ class CompanionOverlayView(
     }
 
     private fun drawAstroBot(canvas: Canvas, r: Float) {
-        // 1. Soft Breathing Jetpack Thruster Flame Under Bot
         val flameLen = (0.32f + abs(sin(stateTimer * 6.5f)) * 0.32f) * r
         earPath.reset()
         earPath.moveTo(-r * 0.30f, r * 1.42f)
@@ -1350,7 +1381,6 @@ class CompanionOverlayView(
         earPath.close()
         canvas.drawPath(earPath, accentPaint)
 
-        // 2. Glossy Ceramic Bot Body Pod
         bodyRect.set(-r * 0.68f, r * 0.50f, r * 0.68f, r * 1.45f)
         canvas.drawRoundRect(bodyRect, r * 0.5f, r * 0.5f, bodyPaint)
         canvas.drawRoundRect(bodyRect, r * 0.5f, r * 0.5f, cartoonOutlinePaint)
@@ -1358,13 +1388,11 @@ class CompanionOverlayView(
         canvas.drawCircle(0f, r * 0.98f, r * 0.20f, eyePaint)
         canvas.drawCircle(0f, r * 0.98f, r * 0.20f, cartoonOutlinePaint)
 
-        // 3. Top Radar Antenna (Bends slightly with momentum)
         val antTipX = followThroughX * 0.3f
         canvas.drawLine(0f, -r * 0.45f, antTipX, -r * 0.82f, cartoonOutlinePaint)
         canvas.drawCircle(antTipX, -r * 0.88f, r * 0.16f, accentPaint)
         canvas.drawCircle(antTipX, -r * 0.88f, r * 0.16f, cartoonOutlinePaint)
 
-        // 4. Rounded Astro Helmet + Side Ear Cups
         bodyRect.set(-r * 1.12f, -r * 0.05f, r * 1.12f, r * 0.35f)
         canvas.drawRoundRect(bodyRect, r * 0.2f, r * 0.2f, accentPaint)
         canvas.drawRoundRect(bodyRect, r * 0.2f, r * 0.2f, cartoonOutlinePaint)
@@ -1373,17 +1401,14 @@ class CompanionOverlayView(
         canvas.drawRoundRect(bodyRect, r * 0.68f, r * 0.68f, bodyPaint)
         canvas.drawRoundRect(bodyRect, r * 0.68f, r * 0.68f, cartoonOutlinePaint)
 
-        // 5. Dark Curved OLED Glass Visor
         bodyRect.set(-r * 0.78f, -r * 0.22f, r * 0.78f, r * 0.52f)
         canvas.drawRoundRect(bodyRect, r * 0.42f, r * 0.42f, secondaryPaint)
         canvas.drawRoundRect(bodyRect, r * 0.42f, r * 0.42f, cartoonOutlinePaint)
 
         canvas.drawCircle(-r * 0.52f, -r * 0.06f, r * 0.08f, highlightPaint)
 
-        // 6. Glowing Digital Visor Eyes
         drawStudioEyes(canvas, r, yCenter = r * 0.15f, isCatMouth = false)
 
-        // 7. Clamp Hands Gripping the Rope Knot
         val climbHandOffset = if (state == CharacterState.CLIMBING_UP) sin(stateTimer * 9f) * 3.5f * density else 0f
         canvas.drawCircle(-r * 0.18f, -r * 0.14f + climbHandOffset, r * 0.18f, accentPaint)
         canvas.drawCircle(-r * 0.18f, -r * 0.14f + climbHandOffset, r * 0.18f, cartoonOutlinePaint)
@@ -1392,7 +1417,6 @@ class CompanionOverlayView(
     }
 
     private fun drawKitsuneSpirit(canvas: Canvas, r: Float) {
-        // 1. Giant Fluffy Fox Tail with Graceful Inertia Follow-Through
         val sway = sin(stateTimer * 2.2f) * 9f * density + followThroughX * 0.9f
         scarfOrTailPath.reset()
         scarfOrTailPath.moveTo(0f, r * 1.1f)
@@ -1410,7 +1434,6 @@ class CompanionOverlayView(
         canvas.drawPath(scarfOrTailPath, bodyPaint)
         canvas.drawPath(scarfOrTailPath, cartoonOutlinePaint)
 
-        // 2. Fox Body + Cream Chest Fur
         bodyRect.set(-r * 0.68f, r * 0.42f, r * 0.68f, r * 1.50f)
         canvas.drawRoundRect(bodyRect, r * 0.52f, r * 0.52f, bodyPaint)
         canvas.drawRoundRect(bodyRect, r * 0.52f, r * 0.52f, cartoonOutlinePaint)
@@ -1418,7 +1441,6 @@ class CompanionOverlayView(
         bodyRect.set(-r * 0.40f, r * 0.58f, r * 0.40f, r * 1.32f)
         canvas.drawOval(bodyRect, secondaryPaint)
 
-        // 3. Oversized Pointed Kitsune Ears with Inertia Lag
         val earLag = followThroughX * 0.22f
         for (side in listOf(-1f, 1f)) {
             earPath.reset()
@@ -1437,7 +1459,6 @@ class CompanionOverlayView(
             canvas.drawPath(earPath, secondaryPaint)
         }
 
-        // 4. Fox Head + 2.5D Rim Highlight
         bodyRect.set(-r * 0.96f, -r * 0.46f, r * 0.96f, r * 0.78f)
         canvas.drawRoundRect(bodyRect, r * 0.72f, r * 0.72f, bodyPaint)
 
@@ -1447,14 +1468,11 @@ class CompanionOverlayView(
         bodyRect.set(-r * 0.96f, -r * 0.46f, r * 0.96f, r * 0.78f)
         canvas.drawRoundRect(bodyRect, r * 0.72f, r * 0.72f, cartoonOutlinePaint)
 
-        // 5. Golden Shrine Bell at Neck
         canvas.drawCircle(0f, r * 0.68f, r * 0.20f, accentPaint)
         canvas.drawCircle(0f, r * 0.68f, r * 0.20f, cartoonOutlinePaint)
 
-        // 6. Expressive Eyes + Cute Nose
         drawStudioEyes(canvas, r, yCenter = r * 0.14f, isCatMouth = true)
 
-        // 7. Paws Gripping the Rope Knot
         val climbHandOffset = if (state == CharacterState.CLIMBING_UP) sin(stateTimer * 9f) * 3.5f * density else 0f
         canvas.drawCircle(-r * 0.20f, -r * 0.15f + climbHandOffset, r * 0.20f, secondaryPaint)
         canvas.drawCircle(-r * 0.20f, -r * 0.15f + climbHandOffset, r * 0.20f, cartoonOutlinePaint)
@@ -1515,21 +1533,23 @@ class CompanionOverlayView(
     private fun drawStateVfxOverlays(canvas: Canvas) {
         when (state) {
             CharacterState.REACT_CHARGING_SURGE -> {
-                electricArcPaint.alpha = (130 + sin(stateTimer * 8f) * 90).toInt().coerceIn(40, 235)
+                // Smooth Breathing Emerald Energy Ring at Cutout + Ascending Silk Energy Wave
+                val pulseAlpha = (140 + sin(stateTimer * 4.5f) * 80).toInt().coerceIn(50, 230)
+                electricArcPaint.alpha = pulseAlpha
                 canvas.drawCircle(rope.anchorX, rope.anchorY, 21f * density, electricArcPaint)
 
                 lightningPath.reset()
                 lightningPath.moveTo(rope.x[0], rope.y[0])
                 for (i in 1 until rope.nodeCount) {
-                    val wave = sin(stateTimer * 10f + i * 0.7f) * 6f * density
-                    lightningPath.lineTo(rope.x[i] + wave, rope.y[i])
+                    val upwardWave = sin(stateTimer * 7f + i * 0.55f) * 4.5f * density
+                    lightningPath.lineTo(rope.x[i] + upwardWave, rope.y[i])
                 }
                 canvas.drawPath(lightningPath, electricArcPaint)
 
                 canvas.drawText(
-                    "⚡ $currentBatteryPct%",
+                    "⚡ $currentBatteryPct% Charging",
                     charX,
-                    charY + 42f * density,
+                    charY + 45f * density,
                     batteryTextPaint
                 )
             }
@@ -1567,7 +1587,6 @@ class CompanionOverlayView(
         }
     }
 
-    // Studio Easing Functions (Slow-In / Slow-Out)
     private fun easeOutCubic(t: Float): Float = 1f - (1f - t).pow(3)
 
     private fun easeInOutCubic(t: Float): Float =
@@ -1576,7 +1595,6 @@ class CompanionOverlayView(
     private fun easeInOutSine(t: Float): Float = -(cos(PI.toFloat() * t) - 1f) / 2f
 
     private fun easeOutSoftBack(t: Float): Float {
-        // Gentle overshoot (c1 = 0.85 instead of harsh 1.70) for organic cushion settle
         val c1 = 0.85f
         val c3 = c1 + 1f
         return 1f + c3 * (t - 1f).pow(3) + c1 * (t - 1f).pow(2)
