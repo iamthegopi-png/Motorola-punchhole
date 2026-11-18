@@ -3,17 +3,17 @@ package com.edge60pro.punchholecompanion
 import android.app.PendingIntent
 import android.content.Context
 import android.graphics.Color
+import android.media.AudioAttributes
 import android.media.AudioManager
-import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.speech.tts.TextToSpeech
+import android.media.MediaPlayer
+import android.net.Uri
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import java.io.File
+import java.io.FileOutputStream
 import java.util.Calendar
-import java.util.Locale
 
 enum class CharacterSkin(
     val displayName: String,
@@ -22,9 +22,7 @@ enum class CharacterSkin(
     val bodyColor: Int,
     val secondaryColor: Int,
     val accentColor: Int,
-    val eyeColor: Int,
-    val voicePitch: Float,
-    val voiceRate: Float
+    val eyeColor: Int
 ) {
     MOCHI_CAT(
         displayName = "Mochi the Cat",
@@ -33,9 +31,7 @@ enum class CharacterSkin(
         bodyColor = Color.parseColor("#FFF8F0"),
         secondaryColor = Color.parseColor("#FFB5A7"),
         accentColor = Color.parseColor("#F77F00"),
-        eyeColor = Color.parseColor("#2B2D42"),
-        voicePitch = 1.52f, // High, cute chibi cat pitch
-        voiceRate = 1.04f
+        eyeColor = Color.parseColor("#2B2D42")
     ),
     SHADOW_NINJA(
         displayName = "Kuro the Ninja",
@@ -44,9 +40,7 @@ enum class CharacterSkin(
         bodyColor = Color.parseColor("#222738"),
         secondaryColor = Color.parseColor("#FFE0B2"),
         accentColor = Color.parseColor("#FF3366"),
-        eyeColor = Color.parseColor("#00F5D4"),
-        voicePitch = 1.20f, // Energetic anime shinobi pitch
-        voiceRate = 1.10f
+        eyeColor = Color.parseColor("#00F5D4")
     ),
     ASTRO_BOT(
         displayName = "Astro Neko-Bot",
@@ -55,9 +49,7 @@ enum class CharacterSkin(
         bodyColor = Color.parseColor("#F8F9FA"),
         secondaryColor = Color.parseColor("#1B1F3B"),
         accentColor = Color.parseColor("#FFBE0B"),
-        eyeColor = Color.parseColor("#00F5D4"),
-        voicePitch = 1.36f, // Cute companion bot pitch
-        voiceRate = 0.98f
+        eyeColor = Color.parseColor("#00F5D4")
     ),
     KITSUNE_SPIRIT(
         displayName = "Kitsune Fox",
@@ -66,9 +58,7 @@ enum class CharacterSkin(
         bodyColor = Color.parseColor("#FF7B00"),
         secondaryColor = Color.parseColor("#FFF3B0"),
         accentColor = Color.parseColor("#FFD166"),
-        eyeColor = Color.parseColor("#3C096C"),
-        voicePitch = 1.44f, // Playful mystical fox pitch
-        voiceRate = 1.02f
+        eyeColor = Color.parseColor("#3C096C")
     )
 }
 
@@ -87,180 +77,254 @@ data class CompanionConfig(
     val autoSwapCharacters: Boolean = true,
     val xOffsetPx: Int = 0,
     val yOffsetPx: Int = 0,
-    val skin: CharacterSkin = CharacterSkin.MOCHI_CAT
-)
-
-data class CuteDialogue(
-    val bubbleText: String,
-    val spokenHindiText: String
+    val skin: CharacterSkin = CharacterSkin.MOCHI_CAT,
+    // Incrementing version counter to refresh UI when custom dialogues or MP3s change
+    val customAssetRevision: Int = 0
 )
 
 /**
- * Zero-Idle-Drain Hindi Voice Engine.
- * Initializes TextToSpeech on demand and automatically shuts it down 9 seconds after speaking
- * so it uses 0 MB of RAM and 0% battery while the character is resting.
+ * Handles internal MP3 storage, custom per-character dialogues, weekly rotating funny Hindi
+ * conversations, and zero-idle-drain MediaPlayer audio playback.
  */
-object CuteVoiceEngine {
-    private var tts: TextToSpeech? = null
-    private var isReady = false
-    private var pendingSpeech: Triple<String, CharacterSkin, Float>? = null
-    private val mainHandler = Handler(Looper.getMainLooper())
+object CustomAudioAndDialogueEngine {
+    private const val VOICE_PREFS = "companion_custom_voice_prefs"
+    private var mediaPlayer: MediaPlayer? = null
 
-    private val hibernateRunnable = Runnable {
-        shutdownNow()
+    @Volatile
+    var isCurrentlySpeaking: Boolean = false
+        private set
+
+    private fun internalMp3File(context: Context, skin: CharacterSkin, isCharging: Boolean): File {
+        val kind = if (isCharging) "charge" else "greet"
+        return File(context.filesDir, "custom_voice_${skin.name.lowercase()}_$kind.mp3")
     }
 
-    fun speak(context: Context, spokenText: String, skin: CharacterSkin) {
-        val cfg = CompanionRepository.config.value
-        if (!cfg.voiceEnabled || cfg.voiceVolume <= 0.01f || spokenText.isBlank()) return
+    /**
+     * Copies a user-picked MP3/audio URI into the app's private internal storage (filesDir).
+     */
+    fun saveMp3FromUri(
+        context: Context,
+        skin: CharacterSkin,
+        isCharging: Boolean,
+        sourceUri: Uri
+    ): Boolean {
+        return runCatching {
+            val destFile = internalMp3File(context, skin, isCharging)
+            context.contentResolver.openInputStream(sourceUri)?.use { input ->
+                FileOutputStream(destFile, false).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            destFile.exists() && destFile.length() > 0L
+        }.getOrDefault(false)
+    }
 
-        // Never interrupt an active phone or WhatsApp call
+    fun deleteSavedMp3(context: Context, skin: CharacterSkin, isCharging: Boolean) {
+        runCatching {
+            val file = internalMp3File(context, skin, isCharging)
+            if (file.exists()) file.delete()
+        }
+    }
+
+    fun hasSavedMp3(context: Context, skin: CharacterSkin, isCharging: Boolean): Boolean {
+        val file = internalMp3File(context, skin, isCharging)
+        return file.exists() && file.length() > 0L
+    }
+
+    fun setCustomDialogue(
+        context: Context,
+        skin: CharacterSkin,
+        isCharging: Boolean,
+        dialogueText: String
+    ) {
+        val key = "dialogue_${skin.name}_${if (isCharging) "charge" else "greet"}"
+        context.getSharedPreferences(VOICE_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(key, dialogueText.trim())
+            .apply()
+    }
+
+    fun getCustomDialogue(context: Context, skin: CharacterSkin, isCharging: Boolean): String {
+        val key = "dialogue_${skin.name}_${if (isCharging) "charge" else "greet"}"
+        return context.getSharedPreferences(VOICE_PREFS, Context.MODE_PRIVATE)
+            .getString(key, "") ?: ""
+    }
+
+    /**
+     * Plays the uploaded MP3 for the character ONLY during Screen-On or Charging.
+     * Immediately releases MediaPlayer hardware resources upon completion for 0% idle battery drain.
+     */
+    fun playCharacterMp3IfAvailable(
+        context: Context,
+        skin: CharacterSkin,
+        isCharging: Boolean
+    ) {
+        val cfg = CompanionRepository.config.value
+        if (!cfg.voiceEnabled || cfg.voiceVolume <= 0.01f) return
+
+        // Do not play audio during an active phone or WhatsApp call
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         if (audioManager?.mode == AudioManager.MODE_IN_CALL ||
             audioManager?.mode == AudioManager.MODE_IN_COMMUNICATION
         ) return
 
-        mainHandler.removeCallbacks(hibernateRunnable)
-        mainHandler.postDelayed(hibernateRunnable, 9_500L)
-
-        val engine = tts
-        if (engine != null && isReady) {
-            playUtterance(engine, spokenText, skin, cfg.voiceVolume)
-            return
-        }
-
-        pendingSpeech = Triple(spokenText, skin, cfg.voiceVolume)
-        if (tts == null) {
-            tts = TextToSpeech(context.applicationContext) { status ->
-                if (status == TextToSpeech.SUCCESS) {
-                    val activeTts = tts ?: return@TextToSpeech
-                    val hindiLocale = Locale("hi", "IN")
-                    val result = activeTts.setLanguage(hindiLocale)
-                    if (result == TextToSpeech.LANG_MISSING_DATA ||
-                        result == TextToSpeech.LANG_NOT_SUPPORTED
-                    ) {
-                        activeTts.setLanguage(Locale("en", "IN"))
-                    }
-                    isReady = true
-                    pendingSpeech?.let { (text, charSkin, vol) ->
-                        playUtterance(activeTts, text, charSkin, vol)
-                        pendingSpeech = null
-                    }
-                }
+        // Use this character's MP3, or fall back to any character's uploaded MP3 of the same type
+        var audioFile = internalMp3File(context, skin, isCharging)
+        if (!audioFile.exists() || audioFile.length() == 0L) {
+            val fallback = CharacterSkin.values()
+                .map { internalMp3File(context, it, isCharging) }
+                .firstOrNull { it.exists() && it.length() > 0L }
+            if (fallback != null) {
+                audioFile = fallback
+            } else {
+                return
             }
         }
-    }
 
-    private fun playUtterance(
-        engine: TextToSpeech,
-        text: String,
-        skin: CharacterSkin,
-        volume: Float
-    ) {
-        engine.setPitch(skin.voicePitch)
-        engine.setSpeechRate(skin.voiceRate)
-        val params = Bundle().apply {
-            putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volume.coerceIn(0f, 1f))
-        }
-        engine.speak(text, TextToSpeech.QUEUE_FLUSH, params, "cute_companion_voice")
-    }
+        stopAndReleaseNow()
 
-    fun shutdownNow() {
-        mainHandler.removeCallbacks(hibernateRunnable)
-        pendingSpeech = null
-        isReady = false
         runCatching {
-            tts?.stop()
-            tts?.shutdown()
+            val vol = cfg.voiceVolume.coerceIn(0f, 1f)
+            mediaPlayer = MediaPlayer().apply {
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                setDataSource(audioFile.absolutePath)
+                setVolume(vol, vol)
+                setOnCompletionListener {
+                    stopAndReleaseNow()
+                }
+                setOnErrorListener { _, _, _ ->
+                    stopAndReleaseNow()
+                    true
+                }
+                prepare()
+                isCurrentlySpeaking = true
+                start()
+            }
+        }.onFailure {
+            stopAndReleaseNow()
         }
-        tts = null
     }
 
-    fun buildScreenOnGreeting(skin: CharacterSkin, rawName: String): CuteDialogue {
+    fun stopAndReleaseNow() {
+        isCurrentlySpeaking = false
+        runCatching {
+            mediaPlayer?.let { mp ->
+                if (mp.isPlaying) mp.stop()
+                mp.reset()
+                mp.release()
+            }
+        }
+        mediaPlayer = null
+    }
+
+    /**
+     * Returns the user's custom written Screen-On dialogue if set, otherwise picks from
+     * a weekly-rotating pack of funny & cute Hindi greetings.
+     */
+    fun resolveScreenOnBubbleText(context: Context, skin: CharacterSkin, rawName: String): String {
         val name = rawName.trim().ifEmpty { "Dost" }
-        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-
-        // Late-night caring reminder (11 PM to 4 AM) and Morning greeting (5 AM to 10 AM)
-        if (hour in 23..24 || hour in 0..4 && (0..2).random() == 0) {
-            return CuteDialogue(
-                bubbleText = "Arre $name, so jao na! 🌙",
-                spokenHindiText = "अरे $name, इतनी रात हो गई, अभी तक जाग रहे हो? जल्दी सो जाओ ना!"
-            )
-        }
-        if (hour in 5..10 && (0..2).random() == 0) {
-            return CuteDialogue(
-                bubbleText = "Subah ho gayi $name! ☀️",
-                spokenHindiText = "गुड मॉर्निंग $name! सुबह हो गई, चाय पी ली क्या?"
-            )
+        val custom = getCustomDialogue(context, skin, isCharging = false)
+        if (custom.isNotBlank()) {
+            return custom.replace("{name}", name, ignoreCase = true)
         }
 
-        return when (skin) {
+        val weekIndex = Calendar.getInstance().get(Calendar.WEEK_OF_YEAR) % 4
+        val pool = when (skin) {
             CharacterSkin.MOCHI_CAT -> listOf(
-                CuteDialogue(
-                    "Meow~ Kon-kon, $name hain kya? 🐾",
-                    "म्याऊं! कौन कौन, $name हैं क्या? आपसे मिलकर मज़ा आ गया!"
-                ),
-                CuteDialogue(
-                    "Arre waah $name aa gaye! 💕",
-                    "अरे वाह, $name आ गए! म्याऊं, आज क्या प्लान है?"
-                ),
-                CuteDialogue(
-                    "Nyaa~ Kaise ho $name? ✨",
-                    "म्याऊं म्याऊं! कैसे हो $name? मुझे याद किया क्या?"
-                )
-            ).random()
+                listOf("Meow~ Kon-kon, $name hain kya? 🐾", "Arre waah $name aa gaye! 💕", "Purr~ Mujhe yaad kiya $name? ✨"),
+                listOf("Nyaa! $name, aaj bade smart lag rahe ho! 😺", "Meow! Phone kholte hi meri yaad aayi? 🐾", "Chalo $name, thoda masti karein! 🧶"),
+                listOf("Oho $name! Chai-naashta ho gaya? ☕", "Meow~ Aapki smile toh kamaal hai $name! ✨", "Kon-kon? Mere best friend $name! 💕"),
+                listOf("Purrfect timing $name! 🐾", "Meow! Aaj ka din super hit jayega $name! 🌟", "Arre $name, mujhe bhool toh nahi gaye? 😸")
+            )[weekIndex]
 
             CharacterSkin.SHADOW_NINJA -> listOf(
-                CuteDialogue(
-                    "Nin-Nin! $name Boss hain kya? 🥷",
-                    "निन निन! कौन कौन, $name बॉस हैं क्या? निंजा हाज़िर है!"
-                ),
-                CuteDialogue(
-                    "Swagat hai $name Boss! ⚡",
-                    "नमस्ते $name बॉस! हुकुम कीजिये, आज कौन सा मिशन है?"
-                )
-            ).random()
+                listOf("Nin-Nin! Kon-kon, $name Boss hain kya? 🥷", "Swagat hai $name Boss! ⚡", "Shadow Ninja haazir hai $name! 🍃"),
+                listOf("Hukum mere aaka $name! 🥷", "Boss $name, aaj kaun sa mission hai? ⚡", "Chupke se aaya hoon sirf $name ke liye! ✨"),
+                listOf("Nin-Nin! $name Boss ki jai ho! 🔥", "Speed 120Hz, Loyalty 100% for $name! 🥷", "Arre $name Boss, aap aaye bahaar aayi! 🍃"),
+                listOf("Stealth Mode Off! Namaste $name Boss! ⚡", "Koi pareshan kare toh batana $name! 🥷", "Nin-Nin! Aaj full form mein ho $name! 🌟")
+            )[weekIndex]
 
             CharacterSkin.ASTRO_BOT -> listOf(
-                CuteDialogue(
-                    "Beep! $name hain kya? 🤖",
-                    "बीप बूप! कौन कौन, $name हैं क्या? आपको देखकर दिल खुश हो गया!"
-                ),
-                CuteDialogue(
-                    "Hi $name! System Happy! 🚀",
-                    "हेलो $name! आपके आते ही मेरी खुशी हंड्रेड परसेंट हो गई!"
-                )
-            ).random()
+                listOf("Beep-Boop! Kon-kon, $name hain kya? 🤖", "Hi $name! Aapko dekh kar dil khush ho gaya! 🚀", "System Happy: $name Detected! ✨"),
+                listOf("Radar Scan: 100% Cute $name Found! 🤖", "Zero-G सलाम, $name! 🚀", "Beep! Aapke aate hi battery khush ho gayi $name! ⚡"),
+                listOf("Hello $name! Aaj tohchamk rahe ho! 🌟", "Astro-Bot reporting to Captain $name! 🚀", "Boop-Beep! Kya haal chaal $name? 🤖"),
+                listOf("Turbo Greeting for $name! ✨", "Galaxy ka sabse achha dost: $name! 🪐", "Beep! Aapka din mangalmay ho $name! 🤖")
+            )[weekIndex]
 
             CharacterSkin.KITSUNE_SPIRIT -> listOf(
-                CuteDialogue(
-                    "Kon-Kon! $name hain kya? 🦊",
-                    "कॉन कॉन! $name हैं क्या? आज आपका दिन बहुत शुभ हो!"
-                ),
-                CuteDialogue(
-                    "Namaste $name ji! ✨🔔",
-                    "कॉन कॉन! नमस्ते $name! चलो थोड़ा खेलते हैं!"
-                )
-            ).random()
+                listOf("Kon-Kon! $name hain kya? 🦊", "Namaste $name ji! Aaj ka din shubh ho! 🔔", "Fox Magic sirf $name ke liye! ✨"),
+                listOf("Kon-Kon! $name, aaj kuch achha hone wala hai! 🦊", "Shrine Bell baj gayi, $name aa gaye! 🔔", "Pyare $name ko Kitsune ka pranaam! ✨"),
+                listOf("Oho $name! Kitne dino baad mile! 🦊", "Kon-Kon! Hamesha muskurate raho $name! 🌸", "Lucky Charm activated for $name! 🔔"),
+                listOf("Suprabhat / Namaste $name! 🦊", "Fox Spirit aapke saath hai $name! ✨", "Kon-Kon! Chalo thoda jhoola jhoolein $name! 🔔")
+            )[weekIndex]
         }
+        return pool.random()
     }
 
-    fun buildChargingGreeting(rawName: String, batteryPct: Int): CuteDialogue {
+    /**
+     * Returns the user's custom written Charging dialogue if set, otherwise picks a cute Hindi thank-you.
+     */
+    fun resolveChargingBubbleText(
+        context: Context,
+        skin: CharacterSkin,
+        rawName: String,
+        batteryPct: Int
+    ): String {
         val name = rawName.trim().ifEmpty { "Dost" }
+        val custom = getCustomDialogue(context, skin, isCharging = true)
+        if (custom.isNotBlank()) {
+            return custom
+                .replace("{name}", name, ignoreCase = true)
+                .replace("{battery}", "$batteryPct%", ignoreCase = true)
+        }
+
         return listOf(
-            CuteDialogue(
-                "Charge dene ke liye Thank U $name! ⚡",
-                "चार्ज देने के लिए थैंक यू $name! आहा, अब मुझमें फुल एनर्जी आ रही है!"
-            ),
-            CuteDialogue(
-                "Shukriya $name! Yummy Power ($batteryPct%) 🔋",
-                "चार्ज लगाने के लिए बहुत बहुत शुक्रिया $name! पेट भर गया एनर्जी से!"
-            ),
-            CuteDialogue(
-                "Thank U $name! Maza aa gaya! ✨",
-                "चार्ज देने के लिए थैंक यू सो मच $name! बहुत सुकून मिल रहा है!"
-            )
+            "Charge dene ke liye Thank U $name! ⚡ ($batteryPct%)",
+            "Shukriya $name! Aha, pet bhar gaya energy se! 🔋",
+            "Thank U so much $name! Ab aayega maza! ✨ ($batteryPct%)",
+            "Yummy Power! Charge lagane ke liye dhanyawad $name! ⚡"
         ).random()
+    }
+
+    /**
+     * Silent visual-only conversations for tricks and timer visits (rotates weekly, zero audio).
+     */
+    fun resolveSilentConversation(skin: CharacterSkin, rawName: String): String {
+        val name = rawName.trim().ifEmpty { "Dost" }
+        val weekIndex = Calendar.getInstance().get(Calendar.WEEK_OF_YEAR) % 4
+        val generalPool = listOf(
+            listOf(
+                "Aur batao $name, sab badhiya? ✨",
+                "Thoda paani pi lo $name, hydration zaroori hai! 💧",
+                "Upar punch-hole mein thoda andhera tha, bahar hawa achhi hai! 🍃",
+                "Dekho $name, bina haath lagaye jhool raha hoon! 🎪"
+            ),
+            listOf(
+                "Aaj mausam bada suhana hai na $name? 🌤️",
+                "Phone thoda tilt karo $name, jhoola jhoolna hai! 🎢",
+                "Main chhota zaroor hoon par करतब bade hain! ✨",
+                "Aankhon ko thoda aaram bhi de dena $name! 👀"
+            ),
+            listOf(
+                "Kya chal raha hai screen pe $name? 📱",
+                "Mujhe kheench ke chhodo, rocket ban jaunga! 🚀",
+                "Aapka phone toh makkhan jaisa chalta hai $name! ⚡",
+                "Thak gaye ho toh 2 minute muskura lo $name! 😊"
+            ),
+            listOf(
+                "Upar camera ke paas mera chhota sa ghar hai! 🏠",
+                "Single tap pe trick, double tap pe ghar wapas! 🐾",
+                "Aaj ka din aapke naam $name! 🌟",
+                "Shhh... main chupchap aapki company enjoy kar raha hoon! 💕"
+            )
+        )[weekIndex]
+
+        return generalPool.random()
     }
 }
 
