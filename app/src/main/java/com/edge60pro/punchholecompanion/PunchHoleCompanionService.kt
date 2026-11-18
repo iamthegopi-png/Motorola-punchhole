@@ -80,7 +80,7 @@ class PunchHoleCompanionService : Service() {
                 Intent.ACTION_SCREEN_OFF -> {
                     isScreenOn = false
                     overlayView?.forceSleepNow()
-                    CuteVoiceEngine.shutdownNow()
+                    CustomAudioAndDialogueEngine.stopAndReleaseNow()
                     stopAppearanceTimer()
                 }
                 Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> {
@@ -89,7 +89,6 @@ class PunchHoleCompanionService : Service() {
 
                     val cfg = CompanionRepository.config.value
                     val now = SystemClock.elapsedRealtime()
-                    // Automatically come down and greet in Hindi when screen turns on (15s anti-spam cooldown)
                     if (cfg.greetOnScreenOn && !isCameraInUse && !isPausedForBanking &&
                         overlayView?.state == CharacterState.HIDDEN &&
                         (now - lastScreenGreetElapsedMs) >= 15_000L
@@ -135,6 +134,7 @@ class PunchHoleCompanionService : Service() {
         override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>?) {
             super.onPlaybackConfigChanged(configs)
             if (isPausedForBanking || !isScreenOn || isCameraInUse) return
+            if (CustomAudioAndDialogueEngine.isCurrentlySpeaking) return
 
             val isPlayingMusic = configs?.any { cfg ->
                 cfg.audioAttributes.usage == AudioAttributes.USAGE_MEDIA
@@ -310,7 +310,7 @@ class PunchHoleCompanionService : Service() {
         isPausedForBanking = true
         stealthResumeJob?.cancel()
         overlayView?.forceSleepNow()
-        CuteVoiceEngine.shutdownNow()
+        CustomAudioAndDialogueEngine.stopAndReleaseNow()
         detachWindowsFromScreen()
 
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
@@ -598,7 +598,7 @@ class PunchHoleCompanionService : Service() {
                         if (view != null) {
                             if (view.state == CharacterState.HIDDEN) {
                                 lastSpawnElapsedMs = SystemClock.elapsedRealtime()
-                                view.spawnFromPunchHole(isScreenOnGreeting = true)
+                                view.spawnFromPunchHole(isScreenOnGreeting = false)
                             } else {
                                 view.triggerSingleTapTrick(
                                     CompanionRepository.config.value.allowEdgeWalk
@@ -631,6 +631,7 @@ class PunchHoleCompanionService : Service() {
                     (now - lastSpawnElapsedMs) >= intervalMs
                 ) {
                     lastSpawnElapsedMs = now
+                    // Timer visits are silent visual conversations only
                     overlayView?.spawnFromPunchHole(isScreenOnGreeting = false)
                 }
             }
@@ -649,7 +650,7 @@ class PunchHoleCompanionService : Service() {
         stopAppearanceTimer()
         stealthResumeJob?.cancel()
         serviceScope.cancel()
-        CuteVoiceEngine.shutdownNow()
+        CustomAudioAndDialogueEngine.stopAndReleaseNow()
         runCatching { unregisterReceiver(screenReceiver) }
         runCatching { unregisterReceiver(powerReceiver) }
         runCatching { audioManager.unregisterAudioPlaybackCallback(audioPlaybackCallback) }
