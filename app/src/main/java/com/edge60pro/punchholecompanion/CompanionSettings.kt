@@ -78,14 +78,9 @@ data class CompanionConfig(
     val xOffsetPx: Int = 0,
     val yOffsetPx: Int = 0,
     val skin: CharacterSkin = CharacterSkin.MOCHI_CAT,
-    // Incrementing version counter to refresh UI when custom dialogues or MP3s change
     val customAssetRevision: Int = 0
 )
 
-/**
- * Handles internal MP3 storage, custom per-character dialogues, weekly rotating funny Hindi
- * conversations, and zero-idle-drain MediaPlayer audio playback.
- */
 object CustomAudioAndDialogueEngine {
     private const val VOICE_PREFS = "companion_custom_voice_prefs"
     private var mediaPlayer: MediaPlayer? = null
@@ -99,9 +94,6 @@ object CustomAudioAndDialogueEngine {
         return File(context.filesDir, "custom_voice_${skin.name.lowercase()}_$kind.mp3")
     }
 
-    /**
-     * Copies a user-picked MP3/audio URI into the app's private internal storage (filesDir).
-     */
     fun saveMp3FromUri(
         context: Context,
         skin: CharacterSkin,
@@ -150,10 +142,6 @@ object CustomAudioAndDialogueEngine {
             .getString(key, "") ?: ""
     }
 
-    /**
-     * Plays the uploaded MP3 for the character ONLY during Screen-On or Charging.
-     * Immediately releases MediaPlayer hardware resources upon completion for 0% idle battery drain.
-     */
     fun playCharacterMp3IfAvailable(
         context: Context,
         skin: CharacterSkin,
@@ -162,13 +150,11 @@ object CustomAudioAndDialogueEngine {
         val cfg = CompanionRepository.config.value
         if (!cfg.voiceEnabled || cfg.voiceVolume <= 0.01f) return
 
-        // Do not play audio during an active phone or WhatsApp call
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         if (audioManager?.mode == AudioManager.MODE_IN_CALL ||
             audioManager?.mode == AudioManager.MODE_IN_COMMUNICATION
         ) return
 
-        // Use this character's MP3, or fall back to any character's uploaded MP3 of the same type
         var audioFile = internalMp3File(context, skin, isCharging)
         if (!audioFile.exists() || audioFile.length() == 0L) {
             val fallback = CharacterSkin.values()
@@ -223,8 +209,7 @@ object CustomAudioAndDialogueEngine {
     }
 
     /**
-     * Returns the user's custom written Screen-On dialogue if set, otherwise picks from
-     * a weekly-rotating pack of funny & cute Hindi greetings.
+     * Short, cute Hinglish Screen-On greetings (rotates weekly if custom text is blank).
      */
     fun resolveScreenOnBubbleText(context: Context, skin: CharacterSkin, rawName: String): String {
         val name = rawName.trim().ifEmpty { "Dost" }
@@ -236,38 +221,38 @@ object CustomAudioAndDialogueEngine {
         val weekIndex = Calendar.getInstance().get(Calendar.WEEK_OF_YEAR) % 4
         val pool = when (skin) {
             CharacterSkin.MOCHI_CAT -> listOf(
-                listOf("Meow~ Kon-kon, $name hain kya? 🐾", "Arre waah $name aa gaye! 💕", "Purr~ Mujhe yaad kiya $name? ✨"),
-                listOf("Nyaa! $name, aaj bade smart lag rahe ho! 😺", "Meow! Phone kholte hi meri yaad aayi? 🐾", "Chalo $name, thoda masti karein! 🧶"),
-                listOf("Oho $name! Chai-naashta ho gaya? ☕", "Meow~ Aapki smile toh kamaal hai $name! ✨", "Kon-kon? Mere best friend $name! 💕"),
-                listOf("Purrfect timing $name! 🐾", "Meow! Aaj ka din super hit jayega $name! 🌟", "Arre $name, mujhe bhool toh nahi gaye? 😸")
+                listOf("Kon-kon? $name hain kya? 🐾", "Meow~ Hi $name! 💕", "Aa gaye $name! ✨"),
+                listOf("Kya haal $name? 😺", "Meow! Miss kiya? 🐾", "Chalo masti karein! 🧶"),
+                listOf("Oho $name! Chai pi? ☕", "Cute smile $name! ✨", "Hi mere dost $name! 💕"),
+                listOf("Purr~ Welcome $name! 🐾", "Super day $name! 🌟", "Kaise ho $name? 😸")
             )[weekIndex]
 
             CharacterSkin.SHADOW_NINJA -> listOf(
-                listOf("Nin-Nin! Kon-kon, $name Boss hain kya? 🥷", "Swagat hai $name Boss! ⚡", "Shadow Ninja haazir hai $name! 🍃"),
-                listOf("Hukum mere aaka $name! 🥷", "Boss $name, aaj kaun sa mission hai? ⚡", "Chupke se aaya hoon sirf $name ke liye! ✨"),
-                listOf("Nin-Nin! $name Boss ki jai ho! 🔥", "Speed 120Hz, Loyalty 100% for $name! 🥷", "Arre $name Boss, aap aaye bahaar aayi! 🍃"),
-                listOf("Stealth Mode Off! Namaste $name Boss! ⚡", "Koi pareshan kare toh batana $name! 🥷", "Nin-Nin! Aaj full form mein ho $name! 🌟")
+                listOf("Kon-kon? $name Boss? 🥷", "Swagat hai $name! ⚡", "Ninja ready $name! 🍃"),
+                listOf("Hukum Boss $name! 🥷", "Kya plan hai $name? ⚡", "Hi $name Boss! ✨"),
+                listOf("Nin-Nin! Jai ho $name! 🔥", "Full speed $name! 🥷", "Boss $name aa gaye! 🍃"),
+                listOf("Namaste $name Boss! ⚡", "Sab set hai $name! 🥷", "Rock on $name! 🌟")
             )[weekIndex]
 
             CharacterSkin.ASTRO_BOT -> listOf(
-                listOf("Beep-Boop! Kon-kon, $name hain kya? 🤖", "Hi $name! Aapko dekh kar dil khush ho gaya! 🚀", "System Happy: $name Detected! ✨"),
-                listOf("Radar Scan: 100% Cute $name Found! 🤖", "Zero-G सलाम, $name! 🚀", "Beep! Aapke aate hi battery khush ho gayi $name! ⚡"),
-                listOf("Hello $name! Aaj tohchamk rahe ho! 🌟", "Astro-Bot reporting to Captain $name! 🚀", "Boop-Beep! Kya haal chaal $name? 🤖"),
-                listOf("Turbo Greeting for $name! ✨", "Galaxy ka sabse achha dost: $name! 🪐", "Beep! Aapka din mangalmay ho $name! 🤖")
+                listOf("Kon-kon? $name hain kya? 🤖", "Hi $name! Dil khush! 🚀", "Hello $name! ✨"),
+                listOf("100% Cute $name! 🤖", "Zero-G Salaam $name! 🚀", "Battery happy $name! ⚡"),
+                listOf("Chamak rahe ho $name! 🌟", "Hi Captain $name! 🚀", "Kya haal $name? 🤖"),
+                listOf("Turbo Hi $name! ✨", "Best friend $name! 🪐", "Good vibes $name! 🤖")
             )[weekIndex]
 
             CharacterSkin.KITSUNE_SPIRIT -> listOf(
-                listOf("Kon-Kon! $name hain kya? 🦊", "Namaste $name ji! Aaj ka din shubh ho! 🔔", "Fox Magic sirf $name ke liye! ✨"),
-                listOf("Kon-Kon! $name, aaj kuch achha hone wala hai! 🦊", "Shrine Bell baj gayi, $name aa gaye! 🔔", "Pyare $name ko Kitsune ka pranaam! ✨"),
-                listOf("Oho $name! Kitne dino baad mile! 🦊", "Kon-Kon! Hamesha muskurate raho $name! 🌸", "Lucky Charm activated for $name! 🔔"),
-                listOf("Suprabhat / Namaste $name! 🦊", "Fox Spirit aapke saath hai $name! ✨", "Kon-Kon! Chalo thoda jhoola jhoolein $name! 🔔")
+                listOf("Kon-Kon! $name hain kya? 🦊", "Namaste $name ji! 🔔", "Fox magic $name! ✨"),
+                listOf("Lucky day $name! 🦊", "Ding-dong! Hi $name! 🔔", "Kaise ho $name? ✨"),
+                listOf("Oho $name aa gaye! 🦊", "Smile karo $name! 🌸", "Good luck $name! 🔔"),
+                listOf("Hi pyare $name! 🦊", "Chalo khelein $name! ✨", "Kon-Kon $name! 🔔")
             )[weekIndex]
         }
         return pool.random()
     }
 
     /**
-     * Returns the user's custom written Charging dialogue if set, otherwise picks a cute Hindi thank-you.
+     * Short, cute Hinglish Charging lines.
      */
     fun resolveChargingBubbleText(
         context: Context,
@@ -284,43 +269,43 @@ object CustomAudioAndDialogueEngine {
         }
 
         return listOf(
-            "Charge dene ke liye Thank U $name! ⚡ ($batteryPct%)",
-            "Shukriya $name! Aha, pet bhar gaya energy se! 🔋",
-            "Thank U so much $name! Ab aayega maza! ✨ ($batteryPct%)",
-            "Yummy Power! Charge lagane ke liye dhanyawad $name! ⚡"
+            "Charge dene ke liye Thank U! ⚡",
+            "Thank U $name! ($batteryPct%) 🔋",
+            "Shukriya $name! Full power! ✨",
+            "Yummy energy! Thank U $name! ⚡"
         ).random()
     }
 
     /**
-     * Silent visual-only conversations for tricks and timer visits (rotates weekly, zero audio).
+     * Short, silent Hinglish conversations for tricks & idle hangouts (2-4 words).
      */
     fun resolveSilentConversation(skin: CharacterSkin, rawName: String): String {
         val name = rawName.trim().ifEmpty { "Dost" }
         val weekIndex = Calendar.getInstance().get(Calendar.WEEK_OF_YEAR) % 4
         val generalPool = listOf(
             listOf(
-                "Aur batao $name, sab badhiya? ✨",
-                "Thoda paani pi lo $name, hydration zaroori hai! 💧",
-                "Upar punch-hole mein thoda andhera tha, bahar hawa achhi hai! 🍃",
-                "Dekho $name, bina haath lagaye jhool raha hoon! 🎪"
+                "Sab badhiya $name? ✨",
+                "Paani pi lo $name! 💧",
+                "Mast hawa hai! 🍃",
+                "Jhoola time! 🎪"
             ),
             listOf(
-                "Aaj mausam bada suhana hai na $name? 🌤️",
-                "Phone thoda tilt karo $name, jhoola jhoolna hai! 🎢",
-                "Main chhota zaroor hoon par करतब bade hain! ✨",
-                "Aankhon ko thoda aaram bhi de dena $name! 👀"
+                "Mausam mast hai! 🌤️",
+                "Phone tilt karo! 🎢",
+                "Dekho mera stunt! ✨",
+                "Aaram kar lo $name! 👀"
             ),
             listOf(
-                "Kya chal raha hai screen pe $name? 📱",
-                "Mujhe kheench ke chhodo, rocket ban jaunga! 🚀",
-                "Aapka phone toh makkhan jaisa chalta hai $name! ⚡",
-                "Thak gaye ho toh 2 minute muskura lo $name! 😊"
+                "Kya chal raha hai? 📱",
+                "Kheench ke chhodo! 🚀",
+                "Makkhan phone hai! ⚡",
+                "Muskurao $name! 😊"
             ),
             listOf(
-                "Upar camera ke paas mera chhota sa ghar hai! 🏠",
-                "Single tap pe trick, double tap pe ghar wapas! 🐾",
-                "Aaj ka din aapke naam $name! 🌟",
-                "Shhh... main chupchap aapki company enjoy kar raha hoon! 💕"
+                "Mera chhota ghar! 🏠",
+                "Tap pe trick! 🐾",
+                "Super hit din! 🌟",
+                "Chupchap chill~ 💕"
             )
         )[weekIndex]
 
