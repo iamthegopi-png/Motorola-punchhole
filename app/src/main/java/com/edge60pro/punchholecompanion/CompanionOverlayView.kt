@@ -86,9 +86,8 @@ class CompanionOverlayView(
 
     private var speechText: String = ""
     private var speechTimer: Float = 0f
-    private var speechDuration: Float = 3.8f
+    private var speechDuration: Float = 4.0f
 
-    // Pre-allocated Studio Particle Pool (22 Particles, Zero GC allocation)
     private val maxParticles = 22
     private val partActive = BooleanArray(maxParticles)
     private val partX = FloatArray(maxParticles)
@@ -150,6 +149,11 @@ class CompanionOverlayView(
     private val secondaryPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val accentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val eyePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+
+    private val mouthInteriorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.parseColor("#D94E67")
+    }
 
     private val chinShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
@@ -294,14 +298,10 @@ class CompanionOverlayView(
         syncSkinPaints(currentSkin)
     }
 
-    private fun showSpeechBubble(customMessage: String? = null, durationSec: Float = 3.6f) {
-        val name = CompanionRepository.config.value.userName.trim().ifEmpty { "Dost" }
-        speechText = customMessage ?: when (currentSkin) {
-            CharacterSkin.MOCHI_CAT -> listOf("Meow~ $name! ✨", "Purrfect! 🐾", "Kya haal hai $name? 💕", "Nyaa~ 🧶").random()
-            CharacterSkin.SHADOW_NINJA -> listOf("Nin-Nin $name! 🥷", "Hukum Boss! 🍃", "Shadow Art ✨", "SabTheek $name?").random()
-            CharacterSkin.ASTRO_BOT -> listOf("Zero-G $name! 🚀", "Hi $name! ✨", "Beep-Boop! 🤖", "Full Vibe!").random()
-            CharacterSkin.KITSUNE_SPIRIT -> listOf("Kon-Kon $name! 🦊", "Shubh Din ✨", "Lucky Bell 🔔", "Namaste $name!").random()
-        }
+    private fun showSpeechBubble(customMessage: String? = null, durationSec: Float = 4.0f) {
+        val cfg = CompanionRepository.config.value
+        speechText = customMessage
+            ?: CustomAudioAndDialogueEngine.resolveSilentConversation(currentSkin, cfg.userName)
         speechDuration = durationSec
         speechTimer = speechDuration
     }
@@ -318,7 +318,6 @@ class CompanionOverlayView(
             if (!partActive[i]) {
                 partActive[i] = true
                 if (type == 3) {
-                    // Rising Bioluminescent Charging Orbs floating up toward the character & cutout
                     partX[i] = originX + (Random.nextFloat() - 0.5f) * 52f * density
                     partY[i] = originY + (15f + Random.nextFloat() * 30f) * density
                     partVx[i] = (Random.nextFloat() - 0.5f) * 14f * density
@@ -344,14 +343,21 @@ class CompanionOverlayView(
         }
     }
 
+    /**
+     * Manual punch-hole tap: shows silent visual conversation ONLY (no audio).
+     */
     fun toggleCharacterVisibility() {
         if (state == CharacterState.HIDDEN) {
-            spawnFromPunchHole(isScreenOnGreeting = true)
+            spawnFromPunchHole(isScreenOnGreeting = false)
         } else if (state != CharacterState.CLIMBING_UP) {
             retreatToPunchHole()
         }
     }
 
+    /**
+     * Spawns character from punch hole.
+     * Plays uploaded MP3 audio ONLY when isScreenOnGreeting == true!
+     */
     fun spawnFromPunchHole(isScreenOnGreeting: Boolean = false) {
         if (state == CharacterState.HIDDEN) {
             advanceCharacterIfAutoSwap()
@@ -366,11 +372,21 @@ class CompanionOverlayView(
 
         val cfg = CompanionRepository.config.value
         if (isScreenOnGreeting) {
-            val dialogue = CuteVoiceEngine.buildScreenOnGreeting(currentSkin, cfg.userName)
-            showSpeechBubble(dialogue.bubbleText, durationSec = 4.5f)
-            CuteVoiceEngine.speak(context, dialogue.spokenHindiText, currentSkin)
+            val bubble = CustomAudioAndDialogueEngine.resolveScreenOnBubbleText(
+                context,
+                currentSkin,
+                cfg.userName
+            )
+            showSpeechBubble(bubble, durationSec = 5.0f)
+            // ALLOWED AUDIO SITUATION #1: Turning on the phone
+            CustomAudioAndDialogueEngine.playCharacterMp3IfAvailable(
+                context,
+                currentSkin,
+                isCharging = false
+            )
         } else {
-            showSpeechBubble()
+            // Timer or manual tap: Visual conversation bubble ONLY (Silent)
+            showSpeechBubble(durationSec = 4.2f)
         }
         startAnimationLoop()
     }
@@ -384,6 +400,9 @@ class CompanionOverlayView(
         startAnimationLoop()
     }
 
+    /**
+     * Single-tap tricks show visual conversation bubbles ONLY (no audio played).
+     */
     fun triggerSingleTapTrick(allowEdgeWalk: Boolean) {
         if (state == CharacterState.HIDDEN || state == CharacterState.CLIMBING_UP) return
         stateTimer = 0f
@@ -409,8 +428,7 @@ class CompanionOverlayView(
         when (nextTrick) {
             CharacterState.TRICK_BACKFLIP -> {
                 state = CharacterState.TRICK_BACKFLIP
-                showSpeechBubble("Dekho $name! Backflip! ✨")
-                CuteVoiceEngine.speak(context, "देखो $name, मेरा सुपर फ्लिप!", currentSkin)
+                showSpeechBubble("Dekho $name! Super Backflip! ✨")
             }
             CharacterState.TRICK_BUNGEE_JUMP -> {
                 state = CharacterState.TRICK_BUNGEE_JUMP
@@ -419,30 +437,30 @@ class CompanionOverlayView(
             CharacterState.TRICK_SWING_WAVE -> {
                 state = CharacterState.TRICK_SWING_WAVE
                 rope.applyTipImpulse((if (Random.nextBoolean()) 1 else -1) * 42f * density, 0f)
-                showSpeechBubble("Jhoola~ ✨")
+                showSpeechBubble(
+                    CustomAudioAndDialogueEngine.resolveSilentConversation(currentSkin, name)
+                )
             }
             CharacterState.TRICK_TARZAN_SWING -> {
                 state = CharacterState.TRICK_TARZAN_SWING
                 val dir = if (Random.nextBoolean()) 1 else -1
                 rope.applyTipImpulse(dir * 75f * density, -15f * density)
-                showSpeechBubble("Wheee~ $name! 🌟")
-                CuteVoiceEngine.speak(context, "व्ही! झूला झूलने में मज़ा आ रहा है!", currentSkin)
+                showSpeechBubble("Jhoola jhoolne ka maza hi alag hai $name! 🌟")
             }
             CharacterState.TRICK_UPSIDE_DOWN -> {
                 state = CharacterState.TRICK_UPSIDE_DOWN
                 rope.applyTipImpulse((if (Random.nextBoolean()) 1 else -1) * 22f * density, 12f * density)
-                showSpeechBubble("Ulta Pultha~ 🙃")
+                showSpeechBubble("Duniya ulti dikh rahi hai $name~ 🙃")
             }
             CharacterState.TRICK_SMOKE_TELEPORT -> {
                 state = CharacterState.TRICK_SMOKE_TELEPORT
-                showSpeechBubble("Gayab! Bye $name! 💨")
-                CuteVoiceEngine.speak(context, "बाय बाय $name! फिर मिलेंगे!", currentSkin)
+                showSpeechBubble("Chalo $name, ab aaram karta hoon! 💨")
             }
             CharacterState.EDGE_WALKING -> {
                 state = CharacterState.EDGE_WALKING
                 edgeProgress = rope.anchorX
                 edgeDirection = if (Random.nextBoolean()) 1f else -1f
-                showSpeechBubble("Chalo ghoom ke aate hain! 🐾")
+                showSpeechBubble("Screen ke kinare walk pe ja raha hoon! 🐾")
             }
             else -> {
                 state = CharacterState.IDLE_HANGING
@@ -479,14 +497,17 @@ class CompanionOverlayView(
 
         if (stretch >= 1.65f && velocityY <= 400f) {
             state = CharacterState.SLINGSHOT_LAUNCH
-            showSpeechBubble("Woooosh!! 🚀")
-            CuteVoiceEngine.speak(context, "वूश! मैं चला!", currentSkin)
+            showSpeechBubble("Woooosh!! Rocket Launch! 🚀")
         } else {
             state = CharacterState.TRICK_BACKFLIP
-            showSpeechBubble("Boing~ ✨")
+            showSpeechBubble("Boing~ Kya bounce tha! ✨")
         }
     }
 
+    /**
+     * Plays uploaded Charging MP3 ONLY when isChargingSurge == true!
+     * Low battery shows silent visual conversation only.
+     */
     fun triggerBatteryReaction(isChargingSurge: Boolean, batteryPct: Int) {
         val cfg = CompanionRepository.config.value
         if (isChargingSurge && !cfg.chargingAnimationEnabled) return
@@ -508,19 +529,25 @@ class CompanionOverlayView(
             rope.applyTipImpulse((if (Random.nextBoolean()) 1 else -1) * 28f * density, -18f * density)
             emitParticleBurst(charX, charY, 8, 3, Color.parseColor("#00E676"))
 
-            val chargeDialogue = CuteVoiceEngine.buildChargingGreeting(cfg.userName, batteryPct)
-            showSpeechBubble(chargeDialogue.bubbleText, durationSec = 5.2f)
-            CuteVoiceEngine.speak(context, chargeDialogue.spokenHindiText, currentSkin)
+            val bubble = CustomAudioAndDialogueEngine.resolveChargingBubbleText(
+                context,
+                currentSkin,
+                cfg.userName,
+                batteryPct
+            )
+            showSpeechBubble(bubble, durationSec = 5.5f)
+            // ALLOWED AUDIO SITUATION #2: Plugging in the charger
+            CustomAudioAndDialogueEngine.playCharacterMp3IfAvailable(
+                context,
+                currentSkin,
+                isCharging = true
+            )
         } else {
             state = CharacterState.REACT_LOW_BATTERY
             rope.applyTipImpulse(0f, 20f * density)
             val name = cfg.userName.trim().ifEmpty { "Dost" }
-            showSpeechBubble("Bhookh lagi hai $name... 🪫$batteryPct%", durationSec = 4.5f)
-            CuteVoiceEngine.speak(
-                context,
-                "अरे $name, बैटरी कम हो गई है, प्लीज़ मुझे चार्ज लगा दो ना!",
-                currentSkin
-            )
+            // Silent visual conversation only
+            showSpeechBubble("Bhookh lagi hai $name... Battery $batteryPct% 🪫", durationSec = 4.5f)
         }
         startAnimationLoop()
     }
@@ -535,7 +562,7 @@ class CompanionOverlayView(
         state = CharacterState.DANCE_MUSIC_GROOVE
         stateTimer = 0f
         portalScale = 1f
-        showSpeechBubble("Wah kya gaana hai! 🎵")
+        showSpeechBubble("Wah kya mast gaana baj raha hai! 🎵")
         startAnimationLoop()
     }
 
@@ -912,12 +939,10 @@ class CompanionOverlayView(
             }
 
             CharacterState.REACT_CHARGING_SURGE -> {
-                // Studio Natural Zero-Gravity Charging Animation (6.4s)
                 val duration = 6.4f
                 val p = (stateTimer / duration).coerceIn(0f, 1f)
                 rope.deployedRatio = 0.95f - 0.08f * sin(p * PI.toFloat())
 
-                // Gentle, peaceful figure-8 zero-gravity float
                 rope.applyTipImpulse(sin(stateTimer * 1.8f) * 0.85f * density * dt * 60f, 0f)
                 charX = rope.tipX()
                 charY = rope.tipY() - sin(p * PI.toFloat()) * 14f * density
@@ -927,7 +952,6 @@ class CompanionOverlayView(
                 scaleX = 1f + breath
                 scaleY = 1f - breath
 
-                // Spawn rising bioluminescent energy orbs that float up into the character
                 if (Random.nextFloat() < 0.28f) {
                     val orbColor = if (Random.nextBoolean()) {
                         Color.parseColor("#00E676")
@@ -1051,7 +1075,6 @@ class CompanionOverlayView(
                     partX[i] += partVx[i] * dt
                     partY[i] += partVy[i] * dt
                     if (partType[i] == 3) {
-                        // Gentle inward attraction toward the character/rope while rising
                         val pullX = (charX - partX[i]) * 1.8f * dt
                         partX[i] += pullX
                     } else {
@@ -1067,13 +1090,11 @@ class CompanionOverlayView(
         super.onDraw(canvas)
         if (state == CharacterState.HIDDEN) return
 
-        // 1. Cutout Portal Glow Ring
         if (state == CharacterState.DESCENDING || state == CharacterState.CLIMBING_UP) {
             cutoutRingPaint.alpha = (sin(portalScale * PI.toFloat()) * 190).toInt().coerceIn(0, 210)
             canvas.drawCircle(rope.anchorX, rope.anchorY, 19f * density, cutoutRingPaint)
         }
 
-        // 2. Soft Bioluminescent Charging Aura Behind Character
         if (state == CharacterState.REACT_CHARGING_SURGE) {
             val auraPulse = 1f + sin(stateTimer * 3.8f) * 0.14f
             chargeAuraPaint.alpha = 42
@@ -1082,12 +1103,10 @@ class CompanionOverlayView(
             canvas.drawCircle(charX, charY + 12f * density, 26f * density * auraPulse, chargeAuraPaint)
         }
 
-        // 3. Slingshot Aim Vector
         if (state == CharacterState.DRAGGING_SLINGSHOT && currentStretchRatio > 1.15f) {
             canvas.drawLine(charX, charY, rope.anchorX, rope.anchorY, tensionIndicatorPaint)
         }
 
-        // 4. Studio Cel-Shaded Braided Rope + Knot Ring
         if (rope.deployedRatio > 0.04f) {
             ropePath.reset()
             ropePath.moveTo(rope.x[0], rope.y[0])
@@ -1110,7 +1129,6 @@ class CompanionOverlayView(
             canvas.drawCircle(tipX, tipY, ropeThicknessPx * 1.15f, cartoonOutlinePaint)
         }
 
-        // 5. Character Rig
         val rig = lottieRig
         if (rig != null && rig.isLoaded) {
             rig.drawAtRopeTip(
@@ -1125,15 +1143,12 @@ class CompanionOverlayView(
             drawStudioCartoonCharacter(canvas)
         }
 
-        // 6. Studio Particles
         drawParticles(canvas)
 
-        // 7. Cartoon Speech Bubble Callout
         if (speechTimer > 0f && portalScale > 0.4f) {
             drawCartoonSpeechBubble(canvas)
         }
 
-        // 8. Battery / Music VFX Overlays
         drawStateVfxOverlays(canvas)
     }
 
@@ -1164,7 +1179,6 @@ class CompanionOverlayView(
                     canvas.drawCircle(px, py, sz * 0.75f, particlePaint)
                 }
                 3 -> {
-                    // Glowing Bioluminescent Charging Firefly Orb (Outer Halo + White Core)
                     particlePaint.alpha = (smoothAlpha * 110).toInt().coerceIn(0, 255)
                     canvas.drawCircle(px, py, sz * 1.45f, particlePaint)
                     particlePaint.alpha = (smoothAlpha * 245).toInt().coerceIn(0, 255)
@@ -1497,6 +1511,7 @@ class CompanionOverlayView(
             blushPaint
         )
 
+        val isSpeakingNow = CustomAudioAndDialogueEngine.isCurrentlySpeaking
         val isHappyArc = state == CharacterState.TRICK_BACKFLIP ||
                 state == CharacterState.DANCE_MUSIC_GROOVE ||
                 state == CharacterState.REACT_CHARGING_SURGE ||
@@ -1521,7 +1536,17 @@ class CompanionOverlayView(
             }
         }
 
-        if (isCatMouth) {
+        // Studio Lip-Sync Mouth Animation while MP3 is playing
+        if (isSpeakingNow) {
+            val openRatio = (0.35f + abs(sin(stateTimer * 18f)) * 0.65f)
+            val mouthW = r * 0.16f
+            val mouthH = r * 0.15f * openRatio
+            val mx = lookOffsetX * 0.4f
+            val my = yCenter + r * 0.22f
+            bodyRect.set(mx - mouthW, my - mouthH, mx + mouthW, my + mouthH)
+            canvas.drawOval(bodyRect, mouthInteriorPaint)
+            canvas.drawOval(bodyRect, cartoonOutlinePaint)
+        } else if (isCatMouth) {
             canvas.drawCircle(lookOffsetX * 0.4f, yCenter + r * 0.14f, r * 0.07f, cartoonOutlinePaint)
             bodyRect.set(-r * 0.18f + lookOffsetX * 0.4f, yCenter + r * 0.14f, lookOffsetX * 0.4f, yCenter + r * 0.28f)
             canvas.drawArc(bodyRect, 0f, 180f, false, cartoonOutlinePaint)
@@ -1533,7 +1558,6 @@ class CompanionOverlayView(
     private fun drawStateVfxOverlays(canvas: Canvas) {
         when (state) {
             CharacterState.REACT_CHARGING_SURGE -> {
-                // Smooth Breathing Emerald Energy Ring at Cutout + Ascending Silk Energy Wave
                 val pulseAlpha = (140 + sin(stateTimer * 4.5f) * 80).toInt().coerceIn(50, 230)
                 electricArcPaint.alpha = pulseAlpha
                 canvas.drawCircle(rope.anchorX, rope.anchorY, 21f * density, electricArcPaint)
