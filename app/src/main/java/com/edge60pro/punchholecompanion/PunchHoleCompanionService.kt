@@ -631,7 +631,6 @@ class PunchHoleCompanionService : Service() {
                     (now - lastSpawnElapsedMs) >= intervalMs
                 ) {
                     lastSpawnElapsedMs = now
-                    // Timer visits are silent visual conversations only
                     overlayView?.spawnFromPunchHole(isScreenOnGreeting = false)
                 }
             }
